@@ -405,6 +405,9 @@
     <ClInclude Include="..\shared\desktop\single_instance.h">
       <Filter>desktop</Filter>
     </ClInclude>
+    <ClCompile Include="..\shared\desktop\sjis_table.h">
+      <Filter>desktop</Filter>
+    </ClCompile>
     <ClInclude Include="..\shared\dependencies\json\json.hpp">
       <Filter>dependencies</Filter>
     </ClInclude>
@@ -641,6 +644,9 @@
       <Filter>dependencies\imgui\fonts</Filter>
     </ClInclude>
     <ClInclude Include="..\shared\dependencies\imgui\fonts\RobotoMedium.h">
+      <Filter>dependencies\imgui\fonts</Filter>
+    </ClInclude>
+    <ClInclude Include="..\shared\dependencies\imgui\fonts\NotoSansJPRegular.h">
       <Filter>dependencies\imgui\fonts</Filter>
     </ClInclude>
     <ClInclude Include="..\shared\dependencies\imgui\imconfig.h">

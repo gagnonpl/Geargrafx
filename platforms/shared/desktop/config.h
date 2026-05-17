@@ -280,6 +280,7 @@ struct config_Debug
     int mem_editor_preview_endianess[config_memory_editor_count] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     bool mem_editor_uppercase_hex[config_memory_editor_count] = {true, true, true, true, true, true, true, true, true, true, true, true, true, true};
     bool mem_editor_gray_out_zeros[config_memory_editor_count] = {true, true, true, true, true, true, true, true, true, true, true, true, true, true};
+    int mem_editor_text_encoding = 0;
     int reset_ram = 1;
     int reset_card_ram = 1;
     int reset_registers = 0;

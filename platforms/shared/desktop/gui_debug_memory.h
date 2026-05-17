@@ -58,6 +58,7 @@ EXTERN void gui_debug_memory_watches_window(void);
 EXTERN void gui_debug_memory_step_frame(void);
 EXTERN void gui_debug_memory_copy(void);
 EXTERN void gui_debug_memory_paste(void);
+EXTERN void gui_debug_memory_copy_as_text(void);
 EXTERN void gui_debug_memory_select_all(void);
 EXTERN void gui_debug_memory_goto(int editor, int address);
 EXTERN void gui_debug_memory_save_dump(const char* file_path, bool binary);

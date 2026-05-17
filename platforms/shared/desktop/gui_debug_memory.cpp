@@ -50,6 +50,7 @@ void gui_debug_memory_init(void)
         options.gray_out_zeros = config_debug.mem_editor_gray_out_zeros[i];
         mem_edit[i].SetOptions(options);
     }
+    MemEditor::SetTextEncoding(config_debug.mem_editor_text_encoding);
 }
 
 void gui_debug_memory_destroy(void)
@@ -63,6 +64,7 @@ void gui_debug_memory_destroy(void)
         config_debug.mem_editor_uppercase_hex[i] = options.uppercase_hex;
         config_debug.mem_editor_gray_out_zeros[i] = options.gray_out_zeros;
     }
+    config_debug.mem_editor_text_encoding = MemEditor::GetTextEncoding();
 }
 
 void gui_debug_memory_reset(void)
@@ -167,6 +169,11 @@ void gui_debug_memory_paste(void)
     mem_edit[current_mem_edit].Paste();
 }
 
+void gui_debug_memory_copy_as_text(void)
+{
+    mem_edit[current_mem_edit].CopyAsText();
+}
+
 void gui_debug_memory_select_all(void)
 {
     mem_edit[current_mem_edit].SelectAll();
@@ -231,6 +238,12 @@ static void draw_tabs(void)
     }
 }
 
+static void set_text_encoding(int encoding)
+{
+    config_debug.mem_editor_text_encoding = encoding;
+    MemEditor::SetTextEncoding(encoding);
+}
+
 static void memory_editor_menu(void)
 {
     ImGui::BeginMenuBar();
@@ -262,9 +275,29 @@ static void memory_editor_menu(void)
             gui_debug_memory_copy();
         }
 
+        if (ImGui::MenuItem("Copy As Text", "Ctrl+Shift+C"))
+        {
+            gui_debug_memory_copy_as_text();
+        }
+
         if (ImGui::MenuItem("Paste", "Ctrl+V"))
         {
             gui_debug_memory_paste();
+        }
+
+        ImGui::Separator();
+
+        if (ImGui::BeginMenu("Text Encoding"))
+        {
+            if (ImGui::MenuItem("ASCII", NULL,
+                config_debug.mem_editor_text_encoding == TEXT_ENCODING_ASCII))
+                set_text_encoding(TEXT_ENCODING_ASCII);
+
+            if (ImGui::MenuItem("Shift-JIS", NULL,
+                config_debug.mem_editor_text_encoding == TEXT_ENCODING_SHIFT_JIS))
+                set_text_encoding(TEXT_ENCODING_SHIFT_JIS);
+
+            ImGui::EndMenu();
         }
 
         ImGui::EndMenu();
