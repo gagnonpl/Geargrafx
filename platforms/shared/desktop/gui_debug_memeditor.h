@@ -26,6 +26,12 @@
 #include <iostream>
 #include "imgui.h"
 
+enum MemEditorTextEncoding
+{
+    TEXT_ENCODING_ASCII = 0,
+    TEXT_ENCODING_SHIFT_JIS = 1,
+};
+
 typedef void (*ContextMenuBreakpointCallback)(int editor, int start, int end);
 
 class MemEditor
@@ -70,6 +76,7 @@ public:
     void DrawWatchWindow();
     void DrawSearchWindow();
     void Copy(bool as_decimal = false);
+    void CopyAsText();
     void Paste();
     void JumpToAddress(int address);
     void FindNextValue(int value);
@@ -108,6 +115,8 @@ public:
     int PerformSearch(int op, int compare_type, int compare_value, int data_type);
     std::vector<Search>* GetSearchResults();
     int FindBytesSequence(const char* hex_str, int* out_addresses, int max_results);
+    static void SetTextEncoding(int encoding);
+    static int GetTextEncoding();
     void SetBreakpointCallback(ContextMenuBreakpointCallback cb, int editor);
 
 private:
@@ -187,6 +196,7 @@ private:
     int m_find_bytes_last_address;
     int m_find_bytes_pattern_len;
     std::vector<int> m_find_bytes_results;
+    static int m_text_encoding;
     ContextMenuBreakpointCallback m_breakpoint_callback;
     int m_breakpoint_editor;
 };

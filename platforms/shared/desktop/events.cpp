@@ -86,6 +86,12 @@ void events_shortcuts(const SDL_Event* event)
         return;
     }
 
+    if (event->key.repeat == 0 && key == SDL_SCANCODE_C && (mods & SDL_KMOD_CTRL) && (mods & SDL_KMOD_SHIFT))
+    {
+        gui_shortcut(gui_ShortcutDebugCopyAsText);
+        return;
+    }
+
     if (event->key.repeat == 0 && key == SDL_SCANCODE_C && (mods & SDL_KMOD_CTRL))
     {
         gui_shortcut(gui_ShortcutDebugCopy);

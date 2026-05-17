@@ -24,6 +24,7 @@
 
 #include "gui_debug_memeditor.h"
 #include "gui_debug_constants.h"
+#include "sjis_table.h"
 
 MemEditor::MemEditor()
 {
@@ -104,6 +105,89 @@ void MemEditor::Reset(const char* title, uint8_t* mem_data, int mem_size, int ba
     memcpy(m_search_data, m_mem_data, m_mem_size * m_mem_word);
 }
 
+static void append_utf8(std::string& out, int cp)
+{
+    if (cp <= 0x7F)
+    {
+        out.push_back((char)cp);
+    }
+    else if (cp <= 0x7FF)
+    {
+        out.push_back((char)(0xC0 | (cp >> 6)));
+        out.push_back((char)(0x80 | (cp & 0x3F)));
+    }
+    else if (cp <= 0xFFFF)
+    {
+        out.push_back((char)(0xE0 | (cp >> 12)));
+        out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back((char)(0x80 | (cp & 0x3F)));
+    }
+}
+
+static bool decode_sjis(const uint8_t* byte_ptr, int remaining, std::string& utf8, int* consumed)
+{
+    *consumed = 0;
+
+    if (remaining <= 0)
+        return false;
+
+    auto c1 = *byte_ptr++;
+
+    if (c1 >= 0x20 && c1 < 0x7F) // ascii
+    {
+        if (c1 == 0x5C) // modified ascii yen (U+00A5)
+            utf8.append("\xC2\xA5");
+        else if (c1 == 0x7E) // modified ascii overline (U+203E)
+            utf8.append("\xE2\x80\xBE");
+        else
+            utf8.push_back((char)c1);
+
+        *consumed = 1;
+        return true;
+    }
+    else if ((c1 >= 0x81 && c1 < 0xA0) || (c1 >= 0xE0 && c1 < 0xF0)) // double-byte
+    {
+        if (remaining < 2)
+            return false;
+
+        auto c2 = *byte_ptr;
+        if (c2 < 0x40 || c2 > 0xFC || c2 == 0x7F)
+            return false;
+
+        uint16_t sjis = (c1 << 8) | *byte_ptr;
+        if (sjis < SJIS_TO_UNICODE_BASE || sjis > SJIS_TO_UNICODE_END)
+            return false;
+
+        uint32_t unicode = sjis_to_unicode[sjis - SJIS_TO_UNICODE_BASE];
+        if (unicode == 0)
+            return false;
+
+        append_utf8(utf8, unicode);
+        *consumed = 2;
+        return true;
+    }
+    else if (c1 >= 0xA1 && c1 < 0xE0) // single-byte katakana
+    {
+        append_utf8(utf8, 0xFF61 + (c1 - 0xA1));
+        *consumed = 1;
+        return true;
+    }
+
+    return false;
+}
+
+static bool is_valid_sjis_pair(uint8_t c1, uint8_t c2)
+{
+    return (((c1 >= 0x81 && c1 < 0xA0) ||
+        (c1 >= 0xE0 && c1 < 0xF0)) &&
+        (c2 >= 0x40 && c2 < 0xFD && c2 != 0x7F));
+}
+
+static bool is_printable_ascii(uint8_t c)
+{
+    return (c >= 0x20 && c < 0x7F);
+}
+
 void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
 {
     if (!IsValidPointer(m_mem_data) || m_mem_size <= 0)
@@ -128,6 +212,9 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
     int max_chars_per_cell = 2 * m_mem_word;
     ImVec2 character_size = ImGui::CalcTextSize("0");
     float footer_height = 0;
+    const char* text_column_label = "ASCII";
+    if (m_text_encoding == TEXT_ENCODING_SHIFT_JIS)
+        text_column_label = "SHIFT-JIS";
 
     if (options)
         footer_height += ImGui::GetFrameHeightWithSpacing();
@@ -164,7 +251,7 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
             if ((m_mem_word == 1) && ascii)
             {
                 ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, character_size.x * ascii_padding);
-                ImGui::TableSetupColumn("ASCII", ImGuiTableColumnFlags_WidthFixed, (character_size.x + character_cell_padding * 1) * m_options.bytes_per_row);
+                ImGui::TableSetupColumn(text_column_label, ImGuiTableColumnFlags_WidthFixed, (character_size.x + character_cell_padding * 1) * m_options.bytes_per_row);
             }
 
             ImGui::TableNextRow();
@@ -202,7 +289,7 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
             }
 
             ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, character_size.x * ascii_padding);
-            ImGui::TableSetupColumn("ASCII", ImGuiTableColumnFlags_WidthFixed, (character_size.x + character_cell_padding * 1) * m_options.bytes_per_row);
+            ImGui::TableSetupColumn(text_column_label, ImGuiTableColumnFlags_WidthFixed, (character_size.x + character_cell_padding * 1) * m_options.bytes_per_row);
 
             ImGuiListClipper clipper;
             clipper.Begin(total_rows);
@@ -213,6 +300,10 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
                 {
                     ImGui::TableNextRow();
                     int address = (row * m_options.bytes_per_row);
+
+                    bool skip_next_byte =
+                        address > 0 &&
+                        is_valid_sjis_pair(m_mem_data[address - 1], m_mem_data[address]);
 
                     ImGui::TableNextColumn();
                     char single_addr[32];
@@ -228,6 +319,12 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
                         ImGui::TableNextColumn();
                         if (IsColumnSeparator(x, m_options.bytes_per_row))
                             ImGui::TableNextColumn();
+
+                        if (byte_address >= m_mem_size)
+                        {
+                            ImGui::TextUnformatted("");
+                            continue;
+                        }
 
                         ImVec2 cell_start_pos = ImGui::GetCursorScreenPos() - ImGui::GetStyle().CellPadding;
                         ImVec2 cell_size = (character_size * ImVec2((float)max_chars_per_cell, 1)) + (ImVec2(2, 2) * ImGui::GetStyle().CellPadding) + ImVec2((float)(1 + byte_cell_padding), 0);
@@ -353,11 +450,11 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
                         ImGui::TableNextColumn();
 
                         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(0, 0));
-                        if (ImGui::BeginTable("##ascii_column", m_options.bytes_per_row))
+                        if (ImGui::BeginTable("##text_column", m_options.bytes_per_row))
                         {
                             for (int x = 0; x < m_options.bytes_per_row; x++)
                             {
-                                snprintf(buf, 32, "##ascii_cell%d", x);
+                                snprintf(buf, 32, "##text_cell%d", x);
                                 ImGui::TableSetupColumn(buf, ImGuiTableColumnFlags_WidthFixed, character_size.x + character_cell_padding * 1);
                             }
 
@@ -368,19 +465,74 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
                                 ImGui::TableNextColumn();
 
                                 int byte_address = address + x;
+
+                                if (byte_address >= m_mem_size)
+                                {
+                                    ImGui::TextUnformatted("");
+                                    continue;
+                                }
+
                                 ImVec2 cell_start_pos = ImGui::GetCursorScreenPos() - ImGui::GetStyle().CellPadding;
                                 ImVec2 cell_size = (character_size * ImVec2(1, 1)) + (ImVec2(2, 2) * ImGui::GetStyle().CellPadding) + ImVec2((float)(1 + byte_cell_padding), 0);
 
+                                bool text_cell_hovered = ImGui::IsMouseHoveringRect(
+                                    cell_start_pos,
+                                    cell_start_pos + cell_size,
+                                    false
+                                ) && ImGui::IsWindowHovered();
+
                                 DrawSelectionAsciiBackground(byte_address, cell_start_pos, cell_size);
+
+                                if (text_cell_hovered)
+                                    HandleSelection(byte_address, row);
+
+                                DrawContexMenu(byte_address, text_cell_hovered, options);
 
                                 ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (character_cell_padding * 1) / 2);
                                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0, 0));
                                 ImGui::PushItemWidth(character_size.x);
 
-                                unsigned char c = m_mem_data[byte_address];
 
-                                bool gray_out = m_options.gray_out_zeros && (c < 32 || c >= 128);
-                                ImGui::TextColored(gray_out ? gray_color : normal_color, "%c", (c >= 32 && c < 128) ? c : '.');
+                                if (m_text_encoding == TEXT_ENCODING_SHIFT_JIS)
+                                {
+                                    if (skip_next_byte)
+                                    {
+                                        skip_next_byte = false;
+                                        ImGui::TextUnformatted("");
+                                        ImGui::PopItemWidth();
+                                        ImGui::PopStyleVar();
+                                        continue;
+                                    }
+
+                                    std::string utf8;
+                                    int consumed = 0;
+                                    bool valid_char = decode_sjis(
+                                        &m_mem_data[byte_address],
+                                        m_mem_size - byte_address,
+                                        utf8,
+                                        &consumed
+                                    );
+
+                                    if (valid_char)
+                                    {
+                                        ImGui::TextColored(normal_color, "%s", utf8.c_str());
+                                        if (consumed == 2)
+                                            skip_next_byte = true;
+                                    }
+                                    else
+                                    {
+                                        ImVec4 color = normal_color;
+                                        if (m_options.gray_out_zeros)
+                                            color = gray_color;
+                                        ImGui::TextColored(color, ".");
+                                    }
+                                }
+                                else
+                                {
+                                    unsigned char c = m_mem_data[byte_address];
+                                    bool gray_out = m_options.gray_out_zeros && (c < 32 || c >= 128);
+                                    ImGui::TextColored(gray_out ? gray_color : normal_color, "%c", (c >= 32 && c < 128) ? c : '.');
+                                }
 
                                 ImGui::PopItemWidth();
                                 ImGui::PopStyleVar();
@@ -790,6 +942,14 @@ void MemEditor::DrawContexMenu(int address, bool cell_hovered, bool options)
         if (ImGui::Selectable("Copy As Decimal"))
         {
             Copy(true);
+        }
+
+        if (options)
+        {
+            if (ImGui::Selectable("Copy As Text"))
+            {
+                CopyAsText();
+            }
         }
 
         if (ImGui::Selectable("Paste"))
@@ -1702,6 +1862,55 @@ void MemEditor::Copy(bool as_decimal)
     SDL_SetClipboardText(text.c_str());
 }
 
+void MemEditor::CopyAsText()
+{
+    int size = (m_selection_end - m_selection_start + 1) * m_mem_word;
+    uint8_t* data = m_mem_data + (m_selection_start * m_mem_word);
+
+    std::string utf8;
+    static const char* UTF8_REPLACEMENT = "\xEF\xBF\xBD";
+
+    if (m_text_encoding == TEXT_ENCODING_SHIFT_JIS)
+    {
+        for (int i = 0; i < size;)
+        {
+            int consumed = 0;
+            bool valid_char = decode_sjis(
+                data,
+                size - i,
+                utf8,
+                &consumed
+            );
+
+            if (valid_char)
+            {
+                i += consumed;
+                data += consumed;
+            }
+            else
+            {
+                utf8.append(UTF8_REPLACEMENT);
+                i++;
+                data++;
+            }
+        }
+
+        SDL_SetClipboardText(utf8.c_str());
+    }
+    else if (m_text_encoding == TEXT_ENCODING_ASCII)
+    {
+        for (int i = 0; i < size; i++, data++)
+        {
+            if (is_printable_ascii(*data))
+                utf8.push_back(*data);
+            else
+                utf8.append(UTF8_REPLACEMENT);
+        }
+
+        SDL_SetClipboardText(utf8.c_str());
+    }
+}
+
 void MemEditor::Paste()
 {
     char* clipboard = SDL_GetClipboardText();
@@ -2417,6 +2626,18 @@ void MemEditor::LoadSettings(std::istream& stream)
         stream.read((char*)&watch.format, sizeof(int));
         m_watches.push_back(watch);
     }
+}
+
+int MemEditor::m_text_encoding = TEXT_ENCODING_ASCII;
+
+void MemEditor::SetTextEncoding(int encoding)
+{
+    m_text_encoding = encoding;
+}
+
+int MemEditor::GetTextEncoding()
+{
+    return m_text_encoding;
 }
 
 void MemEditor::SetBreakpointCallback(ContextMenuBreakpointCallback callback, int editor)

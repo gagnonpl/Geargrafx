@@ -23,6 +23,7 @@
 #include "fonts/RobotoMedium.h"
 #include "fonts/MaterialIcons.h"
 #include "fonts/IconsMaterialDesign.h"
+#include "fonts/NotoSansJPRegular.h"
 #include "config.h"
 #include "application.h"
 #include "emu.h"
@@ -92,11 +93,26 @@ bool gui_init(void)
     gui_material_icons_font = io.Fonts->AddFontFromMemoryCompressedTTF(MaterialIcons_compressed_data, MaterialIcons_compressed_size, iconFontSize, &icons_config, icons_ranges);
 
     ImFontConfig font_cfg;
+    ImFontConfig jp_cfg;
+    jp_cfg.MergeMode = true;
+    jp_cfg.PixelSnapH = true;
+    jp_cfg.OversampleH = 1;
+    jp_cfg.OversampleV = 1;
 
     for (int i = 0; i < 4; i++)
     {
-        font_cfg.SizePixels = (13.0f + (i * 3));
+        float size = 13.0f + (i * 3);
+
+        font_cfg.SizePixels = size;
         gui_default_fonts[i] = io.Fonts->AddFontDefault(&font_cfg);
+
+        io.Fonts->AddFontFromMemoryCompressedTTF(
+            NotoSansJPRegular_compressed_data,
+            NotoSansJPRegular_compressed_size,
+            size,
+            &jp_cfg,
+            io.Fonts->GetGlyphRangesJapanese()
+        );
     }
 
     gui_default_font = gui_default_fonts[config_debug.font_size];
@@ -318,6 +334,9 @@ void gui_shortcut(gui_ShortCutEvent event)
         break;
     case gui_ShortcutDebugCopy:
         gui_debug_memory_copy();
+        break;
+    case gui_ShortcutDebugCopyAsText:
+        gui_debug_memory_copy_as_text();
         break;
     case gui_ShortcutDebugPaste:
         gui_debug_memory_paste();

@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|ARM64">
@@ -210,6 +210,7 @@
     <ClInclude Include="..\..\src\trace_logger.h" />
     <ClInclude Include="..\..\src\types.h" />
     <ClInclude Include="..\shared\dependencies\glad\glad.h" />
+    <ClInclude Include="..\shared\dependencies\imgui\fonts\NotoSansJPRegular.h" />
     <ClInclude Include="..\shared\dependencies\libchdr\include\libchdr\bitstream.h" />
     <ClInclude Include="..\shared\dependencies\libchdr\include\libchdr\cdrom.h" />
     <ClInclude Include="..\shared\dependencies\libchdr\include\libchdr\chd.h" />
@@ -286,6 +287,7 @@
     <ClInclude Include="..\shared\desktop\events.h" />
     <ClInclude Include="..\shared\desktop\gamepad.h" />
     <ClInclude Include="..\shared\desktop\utils.h" />
+    <ClInclude Include="..\shared\desktop\sjis_table.h" />
     <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
