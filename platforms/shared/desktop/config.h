@@ -63,7 +63,13 @@ struct config_Emulator
     std::string syscard_bios_path;
     std::string gameexpress_bios_path;
     std::string screenshots_path;
-    std::string last_open_path;
+    std::string last_open_rom_path;
+    std::string last_open_bram_path;
+    std::string last_open_state_path;
+    std::string last_open_bios_path;
+    std::string last_open_mem_dump_path;
+    std::string last_open_debug_settings_path;
+    std::string last_open_palette_path;
     int window_width = 770;
     int window_height = 600;
     bool status_messages = false;

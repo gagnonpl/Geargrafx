@@ -35,8 +35,8 @@
 #include "rewind.h"
 
 static bool open_rom = false;
-static bool open_ram = false;
-static bool save_ram = false;
+static bool open_bram = false;
+static bool save_bram = false;
 static bool open_state = false;
 static bool save_state = false;
 static bool open_about = false;
@@ -80,8 +80,8 @@ void gui_init_menus(void)
 void gui_main_menu(void)
 {
     open_rom = false;
-    open_ram = false;
-    save_ram = false;
+    open_bram = false;
+    save_bram = false;
     open_state = false;
     save_state = false;
     open_about = false;
@@ -213,12 +213,12 @@ static void menu_geargrafx(void)
 
         if (ImGui::MenuItem("Save BRAM As...", "", false, media_actions_enabled))
         {
-            save_ram = true;
+            save_bram = true;
         }
 
         if (ImGui::MenuItem("Load BRAM From...", "", false, media_actions_enabled))
         {
-            open_ram = true;
+            open_bram = true;
         }
 
         ImGui::Separator();
@@ -1791,10 +1791,10 @@ static void file_dialogs(void)
         gui_shortcut_open_rom = false;
         gui_file_dialog_open_rom();
     }
-    if (open_ram)
-        gui_file_dialog_load_ram();
-    if (save_ram)
-        gui_file_dialog_save_ram();
+    if (open_bram)
+        gui_file_dialog_load_bram();
+    if (save_bram)
+        gui_file_dialog_save_bram();
     if (open_state)
         gui_file_dialog_load_state();
     if (save_state)

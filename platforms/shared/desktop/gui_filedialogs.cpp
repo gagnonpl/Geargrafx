@@ -39,8 +39,8 @@ enum FileDialogID
 {
     FileDialog_None = 0,
     FileDialog_OpenROM,
-    FileDialog_LoadRAM,
-    FileDialog_SaveRAM,
+    FileDialog_LoadBRAM,
+    FileDialog_SaveBRAM,
     FileDialog_LoadState,
     FileDialog_SaveState,
     FileDialog_ChooseSavestatePath,
@@ -102,28 +102,28 @@ void gui_file_dialog_open_rom(void)
         return;
 
     SDL_DialogFileFilter filters[] = { { "ROM/CD Files", "pce;sgx;hes;cue;chd;zip" } };
-    const char* default_path = config_emulator.last_open_path.empty() ? NULL : config_emulator.last_open_path.c_str();
+    const char* default_path = config_emulator.last_open_rom_path.empty() ? NULL : config_emulator.last_open_rom_path.c_str();
     SDL_ShowOpenFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_OpenROM, application_sdl_window, filters, 1, default_path, false);
 }
 
-void gui_file_dialog_load_ram(void)
+void gui_file_dialog_load_bram(void)
 {
     if (!begin_dialog())
         return;
 
     SDL_DialogFileFilter filters[] = { { "BRAM Files", "sav;bram;ram;srm" } };
-    const char* default_path = config_emulator.last_open_path.empty() ? NULL : config_emulator.last_open_path.c_str();
-    SDL_ShowOpenFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_LoadRAM, application_sdl_window, filters, 1, default_path, false);
+    const char* default_path = config_emulator.last_open_bram_path.empty() ? NULL : config_emulator.last_open_bram_path.c_str();
+    SDL_ShowOpenFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_LoadBRAM, application_sdl_window, filters, 1, default_path, false);
 }
 
-void gui_file_dialog_save_ram(void)
+void gui_file_dialog_save_bram(void)
 {
     if (!begin_dialog())
         return;
 
     SDL_DialogFileFilter filters[] = { { "BRAM Files", "sav;bram;srm" } };
-    const char* default_path = config_emulator.last_open_path.empty() ? NULL : config_emulator.last_open_path.c_str();
-    SDL_ShowSaveFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_SaveRAM, application_sdl_window, filters, 1, default_path);
+    const char* default_path = config_emulator.last_open_bram_path.empty() ? NULL : config_emulator.last_open_bram_path.c_str();
+    SDL_ShowSaveFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_SaveBRAM, application_sdl_window, filters, 1, default_path);
 }
 
 void gui_file_dialog_load_state(void)
@@ -132,7 +132,7 @@ void gui_file_dialog_load_state(void)
         return;
 
     SDL_DialogFileFilter filters[] = { { "Save State Files", "state;state1;state2;state3;state4;state5" } };
-    const char* default_path = config_emulator.last_open_path.empty() ? NULL : config_emulator.last_open_path.c_str();
+    const char* default_path = config_emulator.last_open_state_path.empty() ? NULL : config_emulator.last_open_state_path.c_str();
     SDL_ShowOpenFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_LoadState, application_sdl_window, filters, 1, default_path, false);
 }
 
@@ -142,7 +142,7 @@ void gui_file_dialog_save_state(void)
         return;
 
     SDL_DialogFileFilter filters[] = { { "Save State Files", "state" } };
-    const char* default_path = config_emulator.last_open_path.empty() ? NULL : config_emulator.last_open_path.c_str();
+    const char* default_path = config_emulator.last_open_state_path.empty() ? NULL : config_emulator.last_open_state_path.c_str();
     SDL_ShowSaveFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_SaveState, application_sdl_window, filters, 1, default_path);
 }
 
@@ -189,7 +189,7 @@ void gui_file_dialog_load_bios(bool syscard)
 
     FileDialogID id = syscard ? FileDialog_LoadBIOSSyscard : FileDialog_LoadBIOSGameExpress;
     SDL_DialogFileFilter filters[] = { { "BIOS Files", "pce;rom;bios" } };
-    const char* default_path = config_emulator.last_open_path.empty() ? NULL : config_emulator.last_open_path.c_str();
+    const char* default_path = config_emulator.last_open_bios_path.empty() ? NULL : config_emulator.last_open_bios_path.c_str();
     SDL_ShowOpenFileDialog(file_dialog_callback, (void*)(intptr_t)id, application_sdl_window, filters, 1, default_path, false);
 }
 
@@ -256,7 +256,8 @@ void gui_file_dialog_save_memory_dump(bool binary)
 
     FileDialogID id = binary ? FileDialog_SaveMemoryDumpBinary : FileDialog_SaveMemoryDumpText;
     SDL_DialogFileFilter filters[] = { { "Memory Dump Files", binary ? "bin" : "txt" } };
-    SDL_ShowSaveFileDialog(file_dialog_callback, (void*)(intptr_t)id, application_sdl_window, filters, 1, NULL);
+    const char* default_path = config_emulator.last_open_mem_dump_path.empty() ? NULL : config_emulator.last_open_mem_dump_path.c_str();
+    SDL_ShowSaveFileDialog(file_dialog_callback, (void*)(intptr_t)id, application_sdl_window, filters, 1, default_path);
 }
 
 void gui_file_dialog_load_memory_dump()
@@ -265,7 +266,7 @@ void gui_file_dialog_load_memory_dump()
         return;
 
     SDL_DialogFileFilter filters[] = { { "Memory Dump Files", "bin" } };
-    const char* default_path = config_emulator.last_open_path.empty() ? NULL : config_emulator.last_open_path.c_str();
+    const char* default_path = config_emulator.last_open_mem_dump_path.empty() ? NULL : config_emulator.last_open_mem_dump_path.c_str();
     SDL_ShowOpenFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_LoadMemoryDumpBinary, application_sdl_window, filters, 1, default_path, false);
 }
 
@@ -294,7 +295,7 @@ void gui_file_dialog_save_debug_settings(void)
         return;
 
     SDL_DialogFileFilter filters[] = { { "Debug Settings Files", "ggdebug" } };
-    const char* default_path = config_emulator.last_open_path.empty() ? NULL : config_emulator.last_open_path.c_str();
+    const char* default_path = config_emulator.last_open_debug_settings_path.empty() ? NULL : config_emulator.last_open_debug_settings_path.c_str();
     SDL_ShowSaveFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_SaveDebugSettings, application_sdl_window, filters, 1, default_path);
 }
 
@@ -304,7 +305,7 @@ void gui_file_dialog_load_debug_settings(void)
         return;
 
     SDL_DialogFileFilter filters[] = { { "Debug Settings Files", "ggdebug" } };
-    const char* default_path = config_emulator.last_open_path.empty() ? NULL : config_emulator.last_open_path.c_str();
+    const char* default_path = config_emulator.last_open_debug_settings_path.empty() ? NULL : config_emulator.last_open_debug_settings_path.c_str();
     SDL_ShowOpenFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_LoadDebugSettings, application_sdl_window, filters, 1, default_path, false);
 }
 
@@ -314,7 +315,7 @@ void gui_file_dialog_load_palette(void)
         return;
 
     SDL_DialogFileFilter filters[] = { { "Palette Files", "pal;bin" } };
-    const char* default_path = config_emulator.last_open_path.empty() ? NULL : config_emulator.last_open_path.c_str();
+    const char* default_path = config_emulator.last_open_palette_path.empty() ? NULL : config_emulator.last_open_palette_path.c_str();
     SDL_ShowOpenFileDialog(file_dialog_callback, (void*)(intptr_t)FileDialog_LoadPalette, application_sdl_window, filters, 1, default_path, false);
 }
 
@@ -368,28 +369,34 @@ static void SDLCALL file_dialog_callback(void* userdata, const char* const* file
 
 static void process_dialog_result(FileDialogID id, const char* path)
 {
+    std::string dir_path = path;
+    std::string::size_type pos = dir_path.find_last_of("\\/");
+    if (pos != std::string::npos)
+        dir_path.resize(pos + 1);
+
     switch (id)
     {
         case FileDialog_OpenROM:
         {
-            std::string str_path = path;
-            std::string::size_type pos = str_path.find_last_of("\\/");
-            config_emulator.last_open_path.assign(str_path.substr(0, pos + 1));
+            config_emulator.last_open_rom_path = dir_path;
             gui_load_rom(path);
             break;
         }
-        case FileDialog_LoadRAM:
+        case FileDialog_LoadBRAM:
         {
+            config_emulator.last_open_bram_path = dir_path;
             emu_load_ram(path);
             break;
         }
-        case FileDialog_SaveRAM:
+        case FileDialog_SaveBRAM:
         {
+            config_emulator.last_open_bram_path = dir_path;
             emu_save_ram(path);
             break;
         }
         case FileDialog_LoadState:
         {
+            config_emulator.last_open_state_path = dir_path;
             std::string message("Loading state from ");
             message += path;
             gui_set_status_message(message.c_str(), 3000);
@@ -398,6 +405,7 @@ static void process_dialog_result(FileDialogID id, const char* path)
         }
         case FileDialog_SaveState:
         {
+            config_emulator.last_open_state_path = dir_path;
             std::string message("Saving state to ");
             message += path;
             gui_set_status_message(message.c_str(), 3000);
@@ -431,6 +439,7 @@ static void process_dialog_result(FileDialogID id, const char* path)
         }
         case FileDialog_LoadBIOSSyscard:
         {
+            config_emulator.last_open_bios_path = dir_path;
             config_emulator.syscard_bios_path.assign(path);
             strncpy_fit(gui_syscard_bios_path, config_emulator.syscard_bios_path.c_str(), sizeof(gui_syscard_bios_path));
             gui_load_bios(path, true);
@@ -438,6 +447,7 @@ static void process_dialog_result(FileDialogID id, const char* path)
         }
         case FileDialog_LoadBIOSGameExpress:
         {
+            config_emulator.last_open_bios_path = dir_path;
             config_emulator.gameexpress_bios_path.assign(path);
             strncpy_fit(gui_gameexpress_bios_path, config_emulator.gameexpress_bios_path.c_str(), sizeof(gui_gameexpress_bios_path));
             gui_load_bios(path, false);
@@ -477,16 +487,19 @@ static void process_dialog_result(FileDialogID id, const char* path)
         }
         case FileDialog_SaveMemoryDumpBinary:
         {
+            config_emulator.last_open_mem_dump_path = dir_path;
             gui_debug_memory_save_dump(path, true);
             break;
         }
         case FileDialog_SaveMemoryDumpText:
         {
+            config_emulator.last_open_mem_dump_path = dir_path;
             gui_debug_memory_save_dump(path, false);
             break;
         }
         case FileDialog_LoadMemoryDumpBinary:
         {
+            config_emulator.last_open_mem_dump_path = dir_path;
             gui_debug_memory_load_dump(path);
             break;
         }
@@ -507,18 +520,21 @@ static void process_dialog_result(FileDialogID id, const char* path)
         }
         case FileDialog_SaveDebugSettings:
         {
+            config_emulator.last_open_debug_settings_path = dir_path;
             gui_debug_save_settings(path);
             gui_set_status_message("Debug settings saved", 3000);
             break;
         }
         case FileDialog_LoadDebugSettings:
         {
+            config_emulator.last_open_debug_settings_path = dir_path;
             gui_debug_load_settings(path);
             gui_set_status_message("Debug settings loaded", 3000);
             break;
         }
         case FileDialog_LoadPalette:
         {
+            config_emulator.last_open_palette_path = dir_path;
             gui_load_palette(path);
             break;
         }
