@@ -460,6 +460,10 @@ static const BreakpointTypeInfo k_breakpoint_type_info[HuC6280::HuC6280_BREAKPOI
 
 static const int k_breakpoint_type_info_count =
     (int)(sizeof(k_breakpoint_type_info) / sizeof(k_breakpoint_type_info[0]));
+static_assert(
+    k_breakpoint_type_info_count == HuC6280::HuC6280_BREAKPOINT_TYPE_COUNT,
+    "k_breakpoint_type_info has wrong number of BP types"
+);
 
 static const BreakpointTypeInfo* get_breakpoint_type_info(int type)
 {
@@ -710,6 +714,8 @@ static void draw_breakpoints_content(void)
     ImGui::PushFont(gui_default_font);
 
     int remove = -1;
+    int move_up = -1;
+    int move_down = -1;
     HuC6280* cpu = emu_get_core()->GetHuC6280();
     const std::vector<HuC6280::GG_Breakpoint>* breakpoints = cpu->GetBreakpoints();
 
@@ -735,9 +741,9 @@ static void draw_breakpoints_content(void)
 
         ImGui::PushID((int)b);
 
-        //ImGui::PushFont(gui_material_icons_font);
+        ImGui::PushFont(gui_material_icons_font);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, 1.0f));
-        ImVec2 bp_icon_btn_size = ImGui::CalcTextSize("X");
+        ImVec2 bp_icon_btn_size = ImGui::CalcTextSize(ICON_MD_KEYBOARD_ARROW_UP);
         bp_icon_btn_size.x += ImGui::GetStyle().FramePadding.x * 2.0f;
         bp_icon_btn_size.y += ImGui::GetStyle().FramePadding.y * 2.0f;
 
@@ -745,17 +751,15 @@ static void draw_breakpoints_content(void)
         {
            remove = b;
            ImGui::PopStyleVar();
-           //ImGui::PopFont();
+           ImGui::PopFont();
            ImGui::PopID();
            continue;
         }
         if (ImGui::IsItemHovered())
         {
-            ImGui::PopFont();
             ImGui::BeginTooltip();
             ImGui::Text("Remove breakpoint");
             ImGui::EndTooltip();
-            ImGui::PushFont(gui_default_font);
         }
 
         ImGui::SameLine(0, 2);
@@ -766,15 +770,27 @@ static void draw_breakpoints_content(void)
         }
         if (ImGui::IsItemHovered())
         {
-            ImGui::PopFont();
             ImGui::BeginTooltip();
             ImGui::Text(brk->enabled ? "Disable breakpoint" : "Enable breakpoint");
             ImGui::EndTooltip();
-            ImGui::PushFont(gui_default_font);
         }
 
+        ImGui::SameLine(0, 2);
+        if (b == 0)
+            ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_MD_KEYBOARD_ARROW_UP "##move_up", bp_icon_btn_size))
+            move_up = (int)b;
+        if (b == 0)
+            ImGui::EndDisabled();
+
+        ImGui::SameLine(0, 2);
+        if (b == breakpoints->size() - 1) ImGui::BeginDisabled();
+        if (ImGui::Button(ICON_MD_KEYBOARD_ARROW_DOWN "##move_down", bp_icon_btn_size))
+            move_down = (int)b;
+        if (b == breakpoints->size() - 1) ImGui::EndDisabled();
+
         ImGui::PopStyleVar();
-        //ImGui::PopFont();
+        ImGui::PopFont();
 
         ImGui::SameLine();
         const BreakpointTypeInfo* info = get_breakpoint_type_info(brk->type);
@@ -880,6 +896,12 @@ static void draw_breakpoints_content(void)
     }
 
     ImGui::PopFont();
+
+    if (move_up > 0)
+        cpu->MoveBreakpoint(move_up, move_up - 1);
+
+    if (move_down >= 0 && move_down < (int)breakpoints->size() - 1)
+        cpu->MoveBreakpoint(move_down, move_down + 1);
 
     if (remove >= 0)
     {

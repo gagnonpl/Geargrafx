@@ -497,6 +497,17 @@ INLINE const std::vector<HuC6280::GG_Breakpoint>* HuC6280::GetBreakpoints() cons
     return &m_breakpoints;
 }
 
+INLINE void HuC6280::MoveBreakpoint(int from, int to)
+{
+    if (from < 0 || to < 0)
+        return;
+
+    if (from >= (int)m_breakpoints.size() || to >= (int)m_breakpoints.size())
+        return;
+
+    std::swap(m_breakpoints[from], m_breakpoints[to]);
+}
+
 INLINE bool HuC6280::HasPhysicalMemoryBreakpoints(bool read) const
 {
     return m_breakpoints_enabled &&

@@ -158,6 +158,7 @@ public:
     bool HasPhysicalMemoryBreakpoints(bool read) const;
     bool HasPhysicalExecuteBreakpoints() const;
     const std::vector<GG_Breakpoint>* GetBreakpoints() const;
+    void MoveBreakpoint(int from, int to);
     void ClearDisassemblerCallStack();
     std::stack<GG_CallStackEntry>* GetDisassemblerCallStack();
     void CheckMemoryBreakpoints(int type, u32 address, bool read);
