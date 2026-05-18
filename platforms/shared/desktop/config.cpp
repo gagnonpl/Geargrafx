@@ -229,6 +229,14 @@ void config_push_recent_media(const std::string& path)
     config_emulator.recent_roms[0] = path;
 }
 
+static std::string read_last_open_path(const char* key)
+{
+    std::string path = read_string("Emulator", key);
+    if (path.empty())
+        path = read_string("Emulator", "LastOpenPath");
+    return path;
+}
+
 void config_read(void)
 {
     if (!config_ini_file->read(config_ini_data))
@@ -345,7 +353,13 @@ void config_read(void)
     config_emulator.mb128_dir_option = read_int("Emulator", "MB128DirOption", 0);
     config_emulator.mb128_path = read_string("Emulator", "MB128Path");
     config_emulator.mb128_mode = read_int("Emulator", "MB128Mode", 0);
-    config_emulator.last_open_path = read_string("Emulator", "LastOpenPath");
+    config_emulator.last_open_rom_path = read_last_open_path("LastOpenROMPath");
+    config_emulator.last_open_bram_path = read_last_open_path("LastOpenBRAMPath");
+    config_emulator.last_open_state_path = read_last_open_path("LastOpenStatePath");
+    config_emulator.last_open_bios_path = read_last_open_path("LastOpenBIOSPath");
+    config_emulator.last_open_mem_dump_path = read_last_open_path("LastOpenMemDumpPath");
+    config_emulator.last_open_debug_settings_path = read_last_open_path("LastOpenDebugSettingsPath");
+    config_emulator.last_open_palette_path = read_last_open_path("LastOpenPalettePath");
     config_emulator.syscard_bios_path = read_string("Emulator", "SysCardBiosPath");
     config_emulator.gameexpress_bios_path = read_string("Emulator", "GameExpressBiosPath");
     config_emulator.window_width = read_int("Emulator", "WindowWidth", 770);
@@ -676,7 +690,13 @@ void config_write(void)
     write_int("Emulator", "MB128DirOption", config_emulator.mb128_dir_option);
     write_string("Emulator", "MB128Path", config_emulator.mb128_path);
     write_int("Emulator", "MB128Mode", config_emulator.mb128_mode);
-    write_string("Emulator", "LastOpenPath", config_emulator.last_open_path);
+    write_string("Emulator", "LastOpenROMPath", config_emulator.last_open_rom_path);
+    write_string("Emulator", "LastOpenBRAMPath", config_emulator.last_open_bram_path);
+    write_string("Emulator", "LastOpenStatePath", config_emulator.last_open_state_path);
+    write_string("Emulator", "LastOpenBIOSPath", config_emulator.last_open_bios_path);
+    write_string("Emulator", "LastOpenMemDumpPath", config_emulator.last_open_mem_dump_path);
+    write_string("Emulator", "LastOpenDebugSettingsPath", config_emulator.last_open_debug_settings_path);
+    write_string("Emulator", "LastOpenPalettePath", config_emulator.last_open_palette_path);
     write_string("Emulator", "SysCardBiosPath", config_emulator.syscard_bios_path);
     write_string("Emulator", "GameExpressBiosPath", config_emulator.gameexpress_bios_path);
     write_int("Emulator", "WindowWidth", config_emulator.window_width);

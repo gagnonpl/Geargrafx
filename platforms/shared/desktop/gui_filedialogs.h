@@ -27,8 +27,8 @@
 #endif
 
 EXTERN void gui_file_dialog_open_rom(void);
-EXTERN void gui_file_dialog_load_ram(void);
-EXTERN void gui_file_dialog_save_ram(void);
+EXTERN void gui_file_dialog_load_bram(void);
+EXTERN void gui_file_dialog_save_bram(void);
 EXTERN void gui_file_dialog_load_state(void);
 EXTERN void gui_file_dialog_save_state(void);
 EXTERN void gui_file_dialog_choose_savestate_path(void);
