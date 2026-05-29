@@ -30,6 +30,8 @@
 #include "gamepad.h"
 #include "emu.h"
 #include "ogl_renderer.h"
+#include "ogl_shader_chain.h"
+#include "shader_preset.h"
 #include "utils.h"
 #include "geargrafx.h"
 #include "rewind.h"
@@ -54,10 +56,17 @@ static bool load_debug_settings = false;
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
 static bool open_physical_cdrom = false;
 #endif
+static ShaderPresetInfo shader_presets[SHADER_PRESET_MAX_DISCOVERED];
+static int shader_preset_count = 0;
 
 static void menu_geargrafx(void);
 static void menu_emulator(void);
 static void menu_video(void);
+static void menu_shader(void);
+static void draw_shader_parameters(void);
+static bool shader_parameter_is_toggle(const ShaderPresetParameter* parameter);
+static bool shader_parameter_is_integer(const ShaderPresetParameter* parameter);
+static int shader_parameter_round_to_int(float value);
 static void menu_input(void);
 static void menu_audio(void);
 static void menu_debug(void);
@@ -75,6 +84,7 @@ static void draw_savestate_slot_info(int slot);
 void gui_init_menus(void)
 {
     gui_shortcut_open_rom = false;
+    shader_preset_count = shader_preset_scan_bundled(shader_presets, SHADER_PRESET_MAX_DISCOVERED);
 }
 
 void gui_main_menu(void)
@@ -158,7 +168,8 @@ static void menu_geargrafx(void)
             {
                 if (config_emulator.recent_roms[i].length() > 0)
                 {
-                    if (ImGui::MenuItem(config_emulator.recent_roms[i].c_str()))
+                    const char* shortcut = (i == 0) ? config_hotkeys[config_HotkeyIndex_ReloadROM].str : NULL;
+                    if (ImGui::MenuItem(config_emulator.recent_roms[i].c_str(), shortcut))
                     {
                         char rom_path[4096];
                         strcpy(rom_path, config_emulator.recent_roms[i].c_str());
@@ -630,6 +641,7 @@ static void menu_emulator(void)
             hotkey_configuration_item("Open ROM:", &config_hotkeys[config_HotkeyIndex_OpenROM]);
             hotkey_configuration_item("Quit:", &config_hotkeys[config_HotkeyIndex_Quit]);
             hotkey_configuration_item("Reset:", &config_hotkeys[config_HotkeyIndex_Reset]);
+            hotkey_configuration_item("Reload ROM:", &config_hotkeys[config_HotkeyIndex_ReloadROM]);
             hotkey_configuration_item("Pause:", &config_hotkeys[config_HotkeyIndex_Pause]);
             hotkey_configuration_item("Fast Forward:", &config_hotkeys[config_HotkeyIndex_FFWD]);
             hotkey_configuration_item("Rewind:", &config_hotkeys[config_HotkeyIndex_Rewind]);
@@ -653,7 +665,6 @@ static void menu_emulator(void)
 
         if (ImGui::BeginMenu("Debug Hotkeys"))
         {
-            hotkey_configuration_item("Reload ROM:", &config_hotkeys[config_HotkeyIndex_ReloadROM]);
             hotkey_configuration_item("Step Into:", &config_hotkeys[config_HotkeyIndex_DebugStepInto]);
             hotkey_configuration_item("Step Over:", &config_hotkeys[config_HotkeyIndex_DebugStepOver]);
             hotkey_configuration_item("Step Out:", &config_hotkeys[config_HotkeyIndex_DebugStepOut]);
@@ -702,7 +713,7 @@ static void menu_video(void)
         if (ImGui::BeginMenu("Fullscreen Mode"))
         {
             ImGui::PushItemWidth(130.0f);
-            ImGui::Combo("##fullscreen_mode", &config_emulator.fullscreen_mode, "Full Screen Desktop\0Full Screen\0\0");
+            ImGui::Combo("##fullscreen_mode", &config_emulator.fullscreen_mode, "Borderless\0Exclusive\0\0");
             ImGui::PopItemWidth();
             ImGui::EndMenu();
         }
@@ -880,31 +891,7 @@ static void menu_video(void)
         }
 
         ImGui::Separator();
-
-        ImGui::MenuItem("Bilinear Filtering", "", &config_video.bilinear);
-
-        if (ImGui::BeginMenu("Screen Ghosting"))
-        {
-            ImGui::MenuItem("Enable Screen Ghosting", "", &config_video.mix_frames);
-            ImGui::SliderFloat("##screen_ghosting", &config_video.mix_frames_intensity, 0.0f, 1.0f, "Intensity = %.2f");
-            ImGui::EndMenu();
-        }
-
-        if (ImGui::BeginMenu("Scanlines"))
-        {
-            ImGui::MenuItem("Enable Scanlines", "", &config_video.scanlines);
-            if (ImGui::IsItemHovered())
-            {
-                ImGui::BeginTooltip();
-                ImGui::Text("In Integer Scale modes, odd scale factors are adjusted");
-                ImGui::Text("when scanlines are enabled without the scanlines filter.");
-                ImGui::Text("Enable Scanlines Filter to allow odd scale factors.");
-                ImGui::EndTooltip();
-            }
-            ImGui::MenuItem("Enable Scanlines Filter", "", &config_video.scanlines_filter);
-            ImGui::SliderFloat("##scanlines", &config_video.scanlines_intensity, 0.0f, 1.0f, "Intensity = %.2f");
-            ImGui::EndMenu();
-        }
+        menu_shader();
 
         if (ImGui::BeginMenu("Low Pass Filter"))
         {
@@ -971,6 +958,167 @@ static void menu_video(void)
 
         ImGui::EndMenu();
     }
+}
+
+static void menu_shader(void)
+{
+    if (!ImGui::BeginMenu("Shader"))
+        return;
+
+    bool has_preset = ogl_shader_chain_has_preset();
+    int selected_index = 0;
+
+    if (has_preset && config_video.shader_mode == config_ShaderMode_External)
+    {
+        for (int i = 0; i < shader_preset_count; i++)
+        {
+            if (shader_preset_config_path_matches(config_video.shader_preset_path.c_str(), shader_presets[i].path))
+            {
+                selected_index = i + 1;
+                break;
+            }
+        }
+    }
+
+    const char* preview = selected_index == 0 ? "Pixel Perfect" : shader_presets[selected_index - 1].name;
+    ImGui::PushItemWidth(240.0f);
+    if (ImGui::BeginCombo("##ShaderPreset", preview))
+    {
+        bool selected = selected_index == 0;
+        if (ImGui::Selectable("Pixel Perfect", selected))
+        {
+            if (selected_index != 0)
+            {
+                ogl_renderer_unload_shader_preset();
+                gui_set_status_message("Shader preset: Pixel Perfect", 3000);
+            }
+        }
+        if (selected)
+            ImGui::SetItemDefaultFocus();
+
+        for (int i = 0; i < shader_preset_count; i++)
+        {
+            selected = selected_index == i + 1;
+            if (ImGui::Selectable(shader_presets[i].name, selected))
+            {
+                if (selected_index != i + 1)
+                {
+                    if (ogl_renderer_load_shader_preset(shader_presets[i].path))
+                    {
+                        std::string message("Shader preset loaded: ");
+                        message += ogl_shader_chain_get_preset_name();
+                        gui_set_status_message(message.c_str(), 3000);
+                    }
+                    else
+                    {
+                        std::string message("Shader preset failed: ");
+                        message += ogl_shader_chain_get_last_error();
+                        gui_set_status_message(message.c_str(), 5000);
+                    }
+                }
+            }
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::PopItemWidth();
+
+    has_preset = ogl_shader_chain_has_preset();
+
+    if (has_preset && ogl_shader_chain_get_parameter_count() > 0)
+    {
+        if (ImGui::BeginMenu("Parameters"))
+        {
+            draw_shader_parameters();
+            ImGui::EndMenu();
+        }
+    }
+    else if (ogl_shader_chain_get_last_error()[0] != '\0')
+    {
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.98f, 0.15f, 0.45f, 1.0f), "%s", ogl_shader_chain_get_last_error());
+    }
+
+    ImGui::EndMenu();
+}
+
+static void draw_shader_parameters(void)
+{
+    int count = ogl_shader_chain_get_parameter_count();
+    if (count <= 0)
+        return;
+
+    const float parameter_width = 220.0f;
+
+    if (ImGui::Button("Restore Defaults", ImVec2(parameter_width, 0.0f)))
+    {
+        if (ogl_shader_chain_restore_default_parameters())
+        {
+            ogl_renderer_save_shader_parameter_config();
+            gui_set_status_message("Shader parameters restored", 3000);
+        }
+    }
+
+    ImGui::PushItemWidth(parameter_width);
+
+    for (int i = 0; i < count; i++)
+    {
+        const ShaderPresetParameter* parameter = ogl_shader_chain_get_parameter(i);
+        if (!parameter)
+            continue;
+
+        float value = parameter->value;
+        char label[160];
+        snprintf(label, sizeof(label), "%s##shader_parameter_%d", parameter->label[0] != '\0' ? parameter->label : parameter->name, i);
+
+        if (shader_parameter_is_toggle(parameter))
+        {
+            bool enabled = value >= 0.5f;
+            if (ImGui::Checkbox(label, &enabled))
+            {
+                ogl_shader_chain_set_parameter(i, enabled ? 1.0f : 0.0f);
+                ogl_renderer_save_shader_parameter_config();
+            }
+            continue;
+        }
+
+        if (shader_parameter_is_integer(parameter))
+        {
+            int int_value = shader_parameter_round_to_int(value);
+            int min_value = shader_parameter_round_to_int(parameter->minimum);
+            int max_value = shader_parameter_round_to_int(parameter->maximum);
+            if (ImGui::SliderInt(label, &int_value, min_value, max_value))
+            {
+                ogl_shader_chain_set_parameter(i, (float)int_value);
+                ogl_renderer_save_shader_parameter_config();
+            }
+            continue;
+        }
+
+        if (ImGui::SliderFloat(label, &value, parameter->minimum, parameter->maximum, "%.3f"))
+        {
+            ogl_shader_chain_set_parameter(i, value);
+            ogl_renderer_save_shader_parameter_config();
+        }
+    }
+
+    ImGui::PopItemWidth();
+}
+
+static bool shader_parameter_is_toggle(const ShaderPresetParameter* parameter)
+{
+    return parameter && parameter->minimum == 0.0f && parameter->maximum == 1.0f && parameter->step >= 1.0f;
+}
+
+static bool shader_parameter_is_integer(const ShaderPresetParameter* parameter)
+{
+    return parameter && parameter->step >= 1.0f;
+}
+
+static int shader_parameter_round_to_int(float value)
+{
+    return value >= 0.0f ? (int)(value + 0.5f) : (int)(value - 0.5f);
 }
 
 static void menu_input(void)

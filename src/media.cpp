@@ -48,6 +48,7 @@ Media::Media(CdRomMedia* cdrom_media)
     m_is_gameexpress = false;
     m_is_sgx = false;
     m_is_cdrom = false;
+    m_is_in_game_database = false;
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
     m_is_physical_cdrom = false;
     m_physical_cdrom_device_id[0] = 0;
@@ -100,6 +101,7 @@ void Media::Reset()
     m_is_gameexpress = false;
     m_is_sgx = false;
     m_is_cdrom = false;
+    m_is_in_game_database = false;
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
     m_is_physical_cdrom = false;
     m_physical_cdrom_device_id[0] = 0;
@@ -230,15 +232,20 @@ bool Media::LoadHuCardFromBuffer(const u8* buffer, int size, const char* path)
         buffer += 512;
     }
 
-    assert((size % 0x2000) == 0);
-    if ((size % 0x2000) != 0)
+    if (size <= 0)
     {
         Error("Invalid size found: %d (0x%X) bytes", size, size);
+        return false;
     }
 
-    m_rom_size = size;
+    m_rom_size = (size + 0x1FFF) & ~0x1FFF;
+
+    if (m_rom_size != size)
+        Log("WARNING: HuCard size %d (0x%X) is not 8KB aligned. Padding to %d (0x%X) bytes", size, size, m_rom_size, m_rom_size);
+
     m_rom = new u8[m_rom_size];
-    memcpy(m_rom, buffer, m_rom_size);
+    memset(m_rom, 0xFF, m_rom_size);
+    memcpy(m_rom, buffer, size);
     m_ready = true;
 
     Debug("HuCard loaded from buffer. Size: %d bytes", m_rom_size);
@@ -568,17 +575,17 @@ void Media::GatherMediaInfoFromDB()
 {
     m_card_ram_size = 0;
     m_is_sgx = false;
+    m_is_in_game_database = false;
 
     int i = 0;
-    bool found = false;
 
-    while(!found && (k_game_database[i].title != 0))
+    while(!m_is_in_game_database && (k_game_database[i].title != 0))
     {
         u32 db_crc = k_game_database[i].crc;
 
         if (db_crc == m_crc)
         {
-            found = true;
+            m_is_in_game_database = true;
             Log("Media found in database: %s. CRC: %08X", k_game_database[i].title, m_crc);
 
             if (k_game_database[i].flags & GG_GAMEDB_CARD_RAM_8000)
@@ -642,7 +649,7 @@ void Media::GatherMediaInfoFromDB()
             i++;
     }
 
-    if (!found)
+    if (!m_is_in_game_database)
     {
         Debug("Media not found in database. CRC: %08X", m_crc);
     }

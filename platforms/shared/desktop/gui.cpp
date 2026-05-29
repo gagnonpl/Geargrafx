@@ -235,8 +235,7 @@ void gui_shortcut(gui_ShortCutEvent event)
         gui_shortcut_open_rom = true;
         break;
     case gui_ShortcutReloadROM:
-        if (config_debug.debug)
-            gui_action_reload_rom();
+        gui_action_reload_rom();
         break;
     case gui_ShortcutReset:
         gui_action_reset();
@@ -625,14 +624,6 @@ static void main_window(void)
         {
             if (scale_multiplier < 1)
                 scale_multiplier = 1;
-
-            if (config_video.scanlines && !config_video.scanlines_filter && (scale_multiplier & 1))
-            {
-                if (scale_multiplier == 1)
-                    scale_multiplier = 2;
-                else
-                    scale_multiplier--;
-            }
         }
     }
 
@@ -645,8 +636,18 @@ static void main_window(void)
         image_h /= framebuffer_scale_y;
     }
 
-    gui_main_window_width = (int)ceilf(image_w);
-    gui_main_window_height = (int)ceilf(image_h);
+    int image_logical_width = (int)ceilf(image_w);
+    int image_logical_height = (int)ceilf(image_h);
+    int image_physical_width = (int)roundf(image_w * framebuffer_scale_x);
+    int image_physical_height = (int)roundf(image_h * framebuffer_scale_y);
+
+    if (image_physical_width < 1)
+        image_physical_width = 1;
+    if (image_physical_height < 1)
+        image_physical_height = 1;
+
+    gui_main_window_width = image_logical_width;
+    gui_main_window_height = image_logical_height;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
@@ -681,10 +682,20 @@ static void main_window(void)
         gui_main_window_hovered = ImGui::IsWindowHovered();
     }
 
-    float tex_h = (float)runtime.screen_width / (float)(SYSTEM_TEXTURE_WIDTH);
-    float tex_v = (float)runtime.screen_height / (float)(SYSTEM_TEXTURE_HEIGHT);
+    OglRendererScreenGeometry screen_geometry;
+    screen_geometry.logical_width = image_logical_width;
+    screen_geometry.logical_height = image_logical_height;
+    screen_geometry.physical_width = image_physical_width;
+    screen_geometry.physical_height = image_physical_height;
+    screen_geometry.framebuffer_scale_x = framebuffer_scale_x;
+    screen_geometry.framebuffer_scale_y = framebuffer_scale_y;
+    ogl_renderer_set_screen_geometry(&screen_geometry);
 
-    ImGui::Image((ImTextureID)(intptr_t)ogl_renderer_emu_texture, ImVec2(image_w, image_h), ImVec2(0, 0), ImVec2(tex_h, tex_v));
+    float tex_h = 1.0f;
+    float tex_v = 1.0f;
+    ogl_renderer_get_screen_uv(&tex_h, &tex_v);
+
+    ImGui::Image((ImTextureID)(intptr_t)ogl_renderer_get_screen_texture(), ImVec2(image_w, image_h), ImVec2(0, 0), ImVec2(tex_h, tex_v));
 
     if (config_video.fps)
         gui_show_fps();
@@ -760,20 +771,25 @@ static void show_loading_popup(void)
     gui_dialog_in_use = true;
 
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    const ImGuiStyle& style = ImGui::GetStyle();
+    ImVec4 loading_highlight = style.Colors[ImGuiCol_HeaderHovered];
+    ImVec4 loading_border = loading_highlight;
+    loading_border.w = 0.80f;
+
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::SetNextWindowSize(ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(30.0f, 20.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 12.0f));
     ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.10f, 0.10f, 0.10f, 0.95f));
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.87f, 0.01f, 0.39f, 0.80f));
+    ImGui::PushStyleColor(ImGuiCol_Border, loading_border);
     ImGui::OpenPopup("##loading");
 
     if (ImGui::BeginPopupModal("##loading", NULL, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove))
     {
         ImGui::PushFont(gui_roboto_font);
 
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.87f, 0.01f, 0.39f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, loading_highlight);
         ImGui::TextUnformatted(ICON_MD_HOURGLASS_EMPTY);
         ImGui::PopStyleColor();
 

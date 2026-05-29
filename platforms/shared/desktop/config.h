@@ -36,11 +36,17 @@ static const int config_version = 2;
 static const int config_max_recent_roms = 10;
 static const int config_memory_editor_count = 14;
 
+enum config_ShaderMode
+{
+    config_ShaderMode_PixelPerfect = 0,
+    config_ShaderMode_External = 1
+};
+
 struct config_Emulator
 {
     bool maximized = false;
     bool fullscreen = false;
-    int fullscreen_mode = 1;
+    int fullscreen_mode = 0;
     bool always_show_menu = false;
     bool paused = false;
     int save_slot = 0;
@@ -93,14 +99,8 @@ struct config_Video
     int scanline_end = 234;
     int palette = 0;
     bool fps = false;
-    bool bilinear = false;
     bool sprite_limit = false;
     bool safe_vdc_defaults = false;
-    bool mix_frames = true;
-    float mix_frames_intensity = 0.50f;
-    bool scanlines = true;
-    bool scanlines_filter = false;
-    float scanlines_intensity = 0.10f;
     bool sync = true;
     float background_color[3] = {0.1f, 0.1f, 0.1f};
     float background_color_debugger[3] = {0.2f, 0.2f, 0.2f};
@@ -108,6 +108,8 @@ struct config_Video
     float lowpass_intensity = 1.0f;
     float lowpass_cutoff_mhz = 5.0f;
     bool lowpass_speed[3] = { false, true, true };
+    int shader_mode = config_ShaderMode_PixelPerfect;
+    std::string shader_preset_path;
 };
 
 struct config_Audio
@@ -277,7 +279,7 @@ struct config_Debug
     bool dis_replace_labels = true;
     int dis_look_ahead_count = 20;
     int font_size = 0;
-    int scale = 1;
+    int scale = 2;
     bool multi_viewport = false;
     bool single_instance = false;
     bool auto_debug_settings = false;
@@ -319,6 +321,8 @@ EXTERN void config_write(void);
 EXTERN void config_load_defaults(void);
 EXTERN void config_push_recent_media(const std::string& path);
 EXTERN void config_update_hotkey_string(config_Hotkey* hotkey);
+EXTERN bool config_read_shader_parameter(const char* preset_file, const char* parameter_name, float* value);
+EXTERN void config_write_shader_parameter(const char* preset_file, const char* parameter_name, float value);
 
 #undef CONFIG_IMPORT
 #undef EXTERN
