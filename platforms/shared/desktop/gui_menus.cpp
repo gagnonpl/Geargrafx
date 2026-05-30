@@ -597,6 +597,25 @@ static void menu_emulator(void)
             ImGui::EndTooltip();
         }
 
+        if (ImGui::MenuItem("Invalidate Cache if CD-ROM Image Changed", "", &config_emulator.invalidate_cache_img_changed))
+        {
+            emu_set_invalidate_cache(config_emulator.invalidate_cache_img_changed);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::Text("Image cache will be invalidated automatically if CD Image changed");
+            ImGui::EndTooltip();
+        }
+
+        if (ImGui::MenuItem("Invalidate CD-ROM Cache Now", "")) {
+            if (emu_get_core()->GetMedia()->IsCDROM()) {
+                auto cdrom_media = emu_get_core()->GetCDROMMedia();
+                if (IsValidPointer(cdrom_media))
+                    cdrom_media->InvalidateCache();
+            }
+        }
+
         if (ImGui::MenuItem("Force Backup RAM", "", &config_emulator.backup_ram))
         {
             emu_set_backup_ram(config_emulator.backup_ram);

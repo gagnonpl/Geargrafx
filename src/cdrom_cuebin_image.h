@@ -56,6 +56,7 @@ private:
         char file_name[256];
         char file_path[1024];
         u32 file_size;
+        u64 last_write_stamp;
         u32 chunk_size;
         u32 chunk_count;
         u8** chunks;
@@ -104,6 +105,8 @@ public:
     virtual bool ReadSamples(u32 lba, u32 offset, s16* buffer, u32 count) override;
     virtual bool PreloadDisc() override;
     virtual bool PreloadTrack(u32 track_number) override;
+    void InvalidateCache();
+    bool InvalidateCacheIfChanged();
     void SetLoadOptions(const GG_CdRomCueBinLoadOptions& options);
 
 private:

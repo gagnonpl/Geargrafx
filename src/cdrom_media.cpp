@@ -165,6 +165,22 @@ bool CdRomMedia::PreloadTrack(u32 track_number)
     }
 }
 
+void CdRomMedia::InvalidateCache()
+{
+    if (m_current_image == m_cue_bin_image
+        && IsValidPointer(m_cue_bin_image))
+        m_cue_bin_image->InvalidateCache();
+}
+
+bool CdRomMedia::InvalidateCacheIfChanged()
+{
+    if (m_current_image == m_cue_bin_image
+        && IsValidPointer(m_cue_bin_image))
+        return m_cue_bin_image->InvalidateCacheIfChanged();
+
+    return false;
+}
+
 u32 CdRomMedia::GetFirstSectorOfTrack(u8 track)
 {
     if (IsValidPointer(m_current_image))

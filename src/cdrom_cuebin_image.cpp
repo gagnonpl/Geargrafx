@@ -399,6 +399,7 @@ void CdRomCueBinImage::InitImgFile(ImgFile* img_file)
     img_file->file_name[0] = 0;
     img_file->file_path[0] = 0;
     img_file->file_size = 0;
+    img_file->last_write_stamp = 0;
     img_file->chunk_size = 0;
     img_file->chunk_count = 0;
     img_file->chunks = NULL;
@@ -518,6 +519,8 @@ bool CdRomCueBinImage::OpenImgFile(ImgFile* img_file)
         }
 
         img_file->file_size = (u32)size;
+
+        get_file_write_stamp(img_file->file_path, &img_file->last_write_stamp);
 
         return true;
     }
@@ -651,6 +654,60 @@ void CdRomCueBinImage::SetupFileChunks(ImgFile* img_file)
 
     for (u32 i = 0; i < img_file->chunk_count; i++)
         InitPointer(img_file->chunks[i]);
+}
+
+void CdRomCueBinImage::InvalidateCache()
+{
+#if defined(GG_ENABLE_CDROM_CUEBIN_READAHEAD)
+    StopReadAheadWorker();
+#endif
+
+    for (ImgFile* img_file : m_img_files)
+    {
+        if (!IsValidPointer(img_file))
+            continue;
+
+        if (!IsValidPointer(img_file->chunks))
+            continue;
+
+        for (u32 i = 0; i < img_file->chunk_count; i++)
+        {
+            SafeDeleteArray(img_file->chunks[i]);
+            InitPointer(img_file->chunks[i]);
+        }
+    }
+
+#if defined(GG_ENABLE_CDROM_CUEBIN_READAHEAD)
+    ResetReadAheadQueue();
+    m_keep_alive_file = NULL;
+
+    if (m_ready && m_load_options.enable_read_ahead)
+        StartReadAheadWorker();
+#endif
+}
+
+bool CdRomCueBinImage::InvalidateCacheIfChanged()
+{
+    bool changed = false;
+
+    for (ImgFile* img_file : m_img_files)
+    {
+        if (!IsValidPointer(img_file))
+            continue;
+
+        u64 current_stamp = 0;
+        if (get_file_write_stamp(img_file->file_path, &current_stamp) &&
+            current_stamp != img_file->last_write_stamp)
+        {
+            img_file->last_write_stamp = current_stamp;
+            changed = true;
+        }
+    }
+
+    if (changed)
+        InvalidateCache();
+
+    return changed;
 }
 
 u32 CdRomCueBinImage::CalculateFileOffset(ImgFile* img_file, u32 chunk_index)

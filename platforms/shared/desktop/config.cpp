@@ -374,6 +374,7 @@ void config_read(void)
     config_emulator.console_type = read_int("Emulator", "ConsoleType", 0);
     config_emulator.cdrom_type = read_int("Emulator", "CDROMType", 0);
     config_emulator.preload_cdrom = read_bool("Emulator", "PreloadCDROM", false);
+    config_emulator.invalidate_cache_img_changed = read_bool("Emulator", "InvalidateCacheCDImgChanged", false);
     config_emulator.mcp_tcp_port = read_int("Emulator", "MCPTCPPort", 7777);
 
     if (config_emulator.savefiles_path.empty())
@@ -710,6 +711,7 @@ void config_write(void)
     write_int("Emulator", "ConsoleType", config_emulator.console_type);
     write_int("Emulator", "CDROMType", config_emulator.cdrom_type);
     write_bool("Emulator", "PreloadCDROM", config_emulator.preload_cdrom);
+    write_bool("Emulator", "InvalidateCacheCDImgChanged", config_emulator.invalidate_cache_img_changed);
     write_int("Emulator", "MCPTCPPort", config_emulator.mcp_tcp_port);
 
     for (int i = 0; i < config_max_recent_roms; i++)

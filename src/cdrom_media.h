@@ -66,6 +66,8 @@ public:
     u32 GetLastSectorOfTrack(u8 track);
     s32 GetTrackFromLBA(u32 lba);
     bool PreloadTrack(u32 track_number);
+    void InvalidateCache();
+    bool InvalidateCacheIfChanged();
 
 private:
     bool IsCdRomUriPath(const char* path);

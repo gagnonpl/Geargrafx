@@ -404,4 +404,36 @@ inline bool extract_zip_to_folder(const char* zip_path, const char* out_folder)
     return true;
 }
 
+inline bool get_file_write_stamp(const char* path, u64* stamp)
+{
+    if (!path || path[0] == '\0' || !stamp)
+        return false;
+
+#if defined(_WIN32)
+    std::wstring wpath = utf8_to_wstring(path);
+    if (wpath.empty())
+        return false;
+
+    WIN32_FILE_ATTRIBUTE_DATA attr;
+    if (!GetFileAttributesExW(wpath.c_str(), GetFileExInfoStandard, &attr))
+        return false;
+
+    ULARGE_INTEGER t;
+    t.LowPart = attr.ftLastWriteTime.dwLowDateTime;
+    t.HighPart = attr.ftLastWriteTime.dwHighDateTime;
+
+    // Raw Windows FILETIME ticks. Only used for equality comparison.
+    *stamp = (u64)t.QuadPart;
+    return true;
+#else
+    struct stat st;
+    if (stat(path, &st) != 0)
+        return false;
+
+    // Seconds since Unix epoch. Only used for equality comparison.
+    *stamp = (u64)st.st_mtime;
+    return true;
+#endif
+}
+
 #endif /* COMMON_H */

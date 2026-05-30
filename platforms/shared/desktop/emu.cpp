@@ -273,6 +273,14 @@ void emu_update(void)
     if (emu_is_empty())
         return;
 
+    auto media = geargrafx->GetMedia();
+    if (media->IsCDROM()) {
+        auto cdrom_media = geargrafx->GetCDROMMedia();
+        if (IsValidPointer(cdrom_media) 
+            && media->IsInvalidateCacheEnabled())
+            cdrom_media->InvalidateCacheIfChanged();
+    }
+
     int sampleCount = 0;
     bool frame_executed = false;
 
@@ -829,6 +837,11 @@ void emu_set_cdrom_type(GG_CDROM_Type cdrom_type)
 void emu_set_preload_cdrom(bool enabled)
 {
     geargrafx->GetMedia()->PreloadCdRom(enabled);
+}
+
+void emu_set_invalidate_cache(bool enabled)
+{
+    geargrafx->GetMedia()->SetInvalidateCache(enabled);
 }
 
 void emu_set_backup_ram(bool enabled)

@@ -83,6 +83,7 @@ struct config_Emulator
     int console_type = 0;
     int cdrom_type = 0;
     bool preload_cdrom = false;
+    bool invalidate_cache_img_changed = false;
     int mcp_tcp_port = 7777;
     bool capture_mouse = false;
     int mouse_sensitivity = 5;

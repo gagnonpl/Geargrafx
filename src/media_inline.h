@@ -135,6 +135,16 @@ inline bool Media::IsPreloadCdRomEnabled()
     return m_preload_cdrom;
 }
 
+inline void Media::SetInvalidateCache(bool enable)
+{
+    m_invalidate_cache = enable;
+}
+
+inline bool Media::IsInvalidateCacheEnabled()
+{
+    return m_invalidate_cache;
+}
+
 inline int Media::GetROMSize()
 {
     return m_rom_size;

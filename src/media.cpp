@@ -64,6 +64,7 @@ Media::Media(CdRomMedia* cdrom_media)
     m_cdrom_type = GG_CDROM_AUTO;
     m_force_backup_ram = false;
     m_preload_cdrom = false;
+    m_invalidate_cache = false;
 
     m_rom_map = new u8*[128];
     m_rom_bank_offset = new u32[128];
