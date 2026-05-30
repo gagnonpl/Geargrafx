@@ -62,6 +62,7 @@ GeargrafxCore::GeargrafxCore()
     m_master_clock_cycles = 0;
     m_frame_ready = false;
     m_mb128_mode = GG_MB128_AUTO;
+    m_ignore_bad_sstate_crc = false;
 }
 
 GeargrafxCore::~GeargrafxCore()
@@ -766,10 +767,23 @@ bool GeargrafxCore::LoadState(std::istream& stream)
             return false;
         }
 
-        if (desktop_header.rom_crc != m_media->GetCRC())
-        {
-            Error("Invalid save state rom crc: 0x%08x", desktop_header.rom_crc);
-            return false;
+        u32 current_crc = m_media->GetCRC();
+        if (desktop_header.rom_crc != current_crc) {
+            if (m_ignore_bad_sstate_crc) {
+                Log(
+                    "WARNING: save state CRC mismatch ignored: state=0x%08X current=0x%08X",
+                    desktop_header.rom_crc,
+                    current_crc
+                );
+            }
+            else {
+                Error(
+                    "Invalid save state rom crc: state=0x%08X current=0x%08X",
+                    desktop_header.rom_crc,
+                    current_crc
+                );
+                return false;
+            }
         }
     }
 #endif
@@ -804,6 +818,11 @@ bool GeargrafxCore::LoadState(std::istream& stream)
     }
 
     return true;
+}
+
+void GeargrafxCore::SetIgnoreBadSStateCRC(bool enabled)
+{
+    m_ignore_bad_sstate_crc = enabled;
 }
 
 bool GeargrafxCore::GetSaveStateHeader(int index, const char* path, GG_SaveState_Header* header)

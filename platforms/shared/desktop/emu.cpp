@@ -276,7 +276,7 @@ void emu_update(void)
     auto media = geargrafx->GetMedia();
     if (media->IsCDROM()) {
         auto cdrom_media = geargrafx->GetCDROMMedia();
-        if (IsValidPointer(cdrom_media) 
+        if (IsValidPointer(cdrom_media)
             && media->IsInvalidateCacheEnabled())
             cdrom_media->InvalidateCacheIfChanged();
     }
@@ -842,6 +842,11 @@ void emu_set_preload_cdrom(bool enabled)
 void emu_set_invalidate_cache(bool enabled)
 {
     geargrafx->GetMedia()->SetInvalidateCache(enabled);
+}
+
+void emu_set_ignore_bad_sstate_crc(bool enabled)
+{
+    geargrafx->SetIgnoreBadSStateCRC(enabled);
 }
 
 void emu_set_backup_ram(bool enabled)

@@ -60,6 +60,7 @@ struct config_Emulator
     std::string savefiles_path;
     int savestates_dir_option = 0;
     std::string savestates_path;
+    bool ignore_bad_sstate_crc = false;
     int screenshots_dir_option = 0;
     std::string backup_ram_path;
     int backup_ram_dir_option = 0;

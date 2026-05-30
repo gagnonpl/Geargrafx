@@ -244,6 +244,11 @@ static void menu_geargrafx(void)
             open_state = true;
         }
 
+        if (ImGui::MenuItem("Ignore Save State CRC Mismatch", "", &config_emulator.ignore_bad_sstate_crc))
+        {
+            emu_set_ignore_bad_sstate_crc(config_emulator.ignore_bad_sstate_crc);
+        }
+
         ImGui::Separator();
 
         if (ImGui::BeginMenu("Save State Slot"))

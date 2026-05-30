@@ -78,6 +78,7 @@ public:
     bool SaveState(u8* buffer, size_t& size, bool screenshot = false);
     bool LoadState(const char* path = NULL, int index = -1);
     bool LoadState(const u8* buffer, size_t size);
+    void SetIgnoreBadSStateCRC(bool enabled);
     bool GetSaveStateHeader(int index, const char* path, GG_SaveState_Header* header);
     bool GetSaveStateScreenshot(int index, const char* path, GG_SaveState_Screenshot* screenshot);
     void ResetSound();
@@ -131,6 +132,7 @@ private:
     u64 m_master_clock_cycles;
     bool m_frame_ready;
     GG_MB128_Mode m_mb128_mode;
+    bool m_ignore_bad_sstate_crc;
 };
 
 #include "geargrafx_core_inline.h"

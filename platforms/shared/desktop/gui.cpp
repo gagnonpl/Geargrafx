@@ -150,6 +150,7 @@ bool gui_init(void)
     emu_set_cdrom_type((GG_CDROM_Type)config_emulator.cdrom_type);
     emu_set_preload_cdrom(config_emulator.preload_cdrom);
     emu_set_invalidate_cache(config_emulator.invalidate_cache_img_changed);
+    emu_set_ignore_bad_sstate_crc(config_emulator.ignore_bad_sstate_crc);
     emu_set_backup_ram(config_emulator.backup_ram);
     emu_set_mb128_mode((GG_MB128_Mode)config_emulator.mb128_mode);
     emu_set_palette(config_video.palette);
