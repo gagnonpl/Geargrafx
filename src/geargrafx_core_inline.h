@@ -158,8 +158,11 @@ INLINE bool GeargrafxCore::ClockHardware(u32 cycles)
         {
             m_master_clock_cycles += cycles;
             m_huc6280->ClockTimer(cycles);
-            if (m_huc6260->Clock<is_sgx>(cycles))
+            if (m_huc6260->Clock<is_sgx>(cycles)) {
                 frame_ready = true;
+                if (m_debug_frame_counter_enabled)
+                    m_debug_frame_counter++;
+            }
             if (is_cdrom)
             {
                 m_cdrom->Clock(cycles);
@@ -174,8 +177,11 @@ INLINE bool GeargrafxCore::ClockHardware(u32 cycles)
         m_master_clock_cycles += step;
         m_huc6280->ClockTimer(step);
         m_huc6202->ProcessCpuVramAccesses(step);
-        if (m_huc6260->Clock<is_sgx>(step))
+        if (m_huc6260->Clock<is_sgx>(step)) {
             frame_ready = true;
+            if (m_debug_frame_counter_enabled)
+                m_debug_frame_counter++;
+        }
         if (is_cdrom)
         {
             m_cdrom->Clock(step);
@@ -272,6 +278,26 @@ INLINE Input* GeargrafxCore::GetInput()
 INLINE u64 GeargrafxCore::GetMasterClockCycles()
 {
     return m_master_clock_cycles;
+}
+
+INLINE u64 GeargrafxCore::GetDebugFrameCounter()
+{
+    return m_debug_frame_counter;
+}
+
+INLINE void GeargrafxCore::ResetDebugFrameCounter()
+{
+    m_debug_frame_counter = 0;
+}
+
+INLINE void GeargrafxCore::SetDebugFrameCounterEnabled(bool enabled)
+{
+    m_debug_frame_counter_enabled = enabled;
+}
+
+INLINE bool GeargrafxCore::IsDebugFrameCounterEnabled()
+{
+    return m_debug_frame_counter_enabled;
 }
 
 #endif /* GEARGRAFX_CORE_INLINE_H */

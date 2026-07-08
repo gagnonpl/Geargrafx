@@ -64,6 +64,7 @@ static bool loading_thread_active;
 static bool loading_result;
 static char loading_file_path[4096];
 static Loading_Request_Type loading_request_type;
+static bool emu_debug_frame_counter_reset_on_continue = false;
 
 static void save_ram(void);
 static void load_ram(void);
@@ -759,6 +760,44 @@ void emu_debug_step_frame(void)
     emu_debug_command = Debug_Command_StepFrame;
 }
 
+u64 emu_debug_get_frame_counter(void)
+{
+    if (emu_is_empty())
+        return 0;
+
+    return geargrafx->GetDebugFrameCounter();
+}
+
+void emu_debug_reset_frame_counter(void)
+{
+    if (!emu_is_empty())
+        geargrafx->ResetDebugFrameCounter();
+}
+
+void emu_debug_set_frame_counter_enabled(bool enabled)
+{
+    if (!emu_is_empty())
+        geargrafx->SetDebugFrameCounterEnabled(enabled);
+}
+
+bool emu_debug_is_frame_counter_enabled(void)
+{
+    if (emu_is_empty())
+        return false;
+
+    return geargrafx->IsDebugFrameCounterEnabled();
+}
+
+bool emu_debug_is_frame_counter_reset_on_continue(void)
+{
+    return emu_debug_frame_counter_reset_on_continue;
+}
+
+void emu_debug_set_frame_counter_reset_on_continue(bool enabled)
+{
+    emu_debug_frame_counter_reset_on_continue = enabled;
+}
+
 void emu_debug_break(void)
 {
     geargrafx->Pause(false);
@@ -768,6 +807,9 @@ void emu_debug_break(void)
 
 void emu_debug_continue(void)
 {
+    if (emu_debug_frame_counter_reset_on_continue && !emu_is_empty())
+        geargrafx->ResetDebugFrameCounter();
+
     geargrafx->Pause(false);
     emu_debug_command = Debug_Command_Continue;
 }

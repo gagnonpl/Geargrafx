@@ -83,6 +83,9 @@ static bool add_bookmark_open = false;
 static bool add_symbol_open = false;
 static const int k_symbol_bank_count = 0x100;
 static const int k_symbol_address_count = 0x10000;
+bool debug_frame_counter_open = false;
+bool debug_frame_counter_reset_on_f5 = true;
+u32 debug_frame_counter = 0;
 
 static void draw_controls(void);
 static void draw_breakpoints(void);
@@ -343,6 +346,10 @@ void gui_debug_save_disassembler(const char* file_path, bool full)
 
         fclose(file);
     }
+}
+
+void debug_frame_counter_reset() {
+    debug_frame_counter = 0;
 }
 
 static void draw_controls(void)

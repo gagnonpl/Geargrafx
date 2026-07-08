@@ -98,6 +98,10 @@ public:
     Audio* GetAudio();
     Input* GetInput();
     u64 GetMasterClockCycles();
+    u64 GetDebugFrameCounter();
+    void ResetDebugFrameCounter();
+    void SetDebugFrameCounterEnabled(bool enabled);
+    bool IsDebugFrameCounterEnabled();
     TraceLogger* GetTraceLogger();
 
 private:
@@ -131,6 +135,8 @@ private:
     TraceLogger* m_trace_logger;
     u64 m_master_clock_cycles;
     bool m_frame_ready;
+    u64 m_debug_frame_counter;
+    bool m_debug_frame_counter_enabled;
     GG_MB128_Mode m_mb128_mode;
     bool m_ignore_bad_sstate_crc;
 };

@@ -60,6 +60,8 @@ GeargrafxCore::GeargrafxCore()
     InitPointer(m_trace_logger);
     m_paused = true;
     m_master_clock_cycles = 0;
+    m_debug_frame_counter = 0;
+    m_debug_frame_counter_enabled = false;
     m_frame_ready = false;
     m_mb128_mode = GG_MB128_AUTO;
     m_ignore_bad_sstate_crc = false;
@@ -927,6 +929,8 @@ bool GeargrafxCore::GetSaveStateScreenshot(int index, const char* path, GG_SaveS
 void GeargrafxCore::Reset()
 {
     m_master_clock_cycles = 0;
+    m_debug_frame_counter = 0;
+    m_debug_frame_counter_enabled = false;
     m_paused = false;
 
     m_media->GatherMediaInfo();

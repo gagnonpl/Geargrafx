@@ -53,6 +53,8 @@ static bool open_syscard_bios = false;
 static bool open_gameexpress_bios = false;
 static bool save_debug_settings = false;
 static bool load_debug_settings = false;
+static bool open_frame_counter = false;
+static void frame_counter_window(void);
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
 static bool open_physical_cdrom = false;
 #endif
@@ -130,6 +132,7 @@ void gui_main_menu(void)
     }
 
     file_dialogs();
+    frame_counter_window();
 }
 
 static void menu_geargrafx(void)
@@ -1067,6 +1070,42 @@ static void menu_shader(void)
     ImGui::EndMenu();
 }
 
+static void frame_counter_window(void)
+{
+    if (!open_frame_counter)
+        return;
+
+    float width = 200.0f;
+    float height = 115.0f;
+    ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSizeConstraints(ImVec2(width, height), ImVec2(FLT_MAX, FLT_MAX));
+
+    if (!ImGui::Begin("Frame Counter", &open_frame_counter))
+    {
+        ImGui::End();
+        return;
+    }
+
+    bool running = emu_debug_is_frame_counter_enabled();
+    bool reset_on_continue = emu_debug_is_frame_counter_reset_on_continue();
+    u64 count = emu_debug_get_frame_counter();
+
+    ImGui::Text("Count: %llu", (unsigned long long)count);
+
+    if (ImGui::Button(running ? "Stop" : "Start"))
+        emu_debug_set_frame_counter_enabled(!running);
+
+    ImGui::SameLine();
+
+    if (ImGui::Button("Reset"))
+        emu_debug_reset_frame_counter();
+
+    if (ImGui::Checkbox("Reset on Continue (F5)", &reset_on_continue))
+        emu_debug_set_frame_counter_reset_on_continue(reset_on_continue);
+
+    ImGui::End();
+}
+
 static void draw_shader_parameters(void)
 {
     int count = ogl_shader_chain_get_parameter_count();
@@ -1794,6 +1833,7 @@ static void menu_debug(void)
         ImGui::MenuItem("Show Disassembler", "", &config_debug.show_disassembler, config_debug.debug);
         ImGui::MenuItem("Show Memory Editor", "", &config_debug.show_memory, config_debug.debug);
         ImGui::MenuItem("Show Trace Logger", "", &config_debug.show_trace_logger, config_debug.debug);
+        ImGui::MenuItem("Frame Counter", "", &open_frame_counter);
 
         ImGui::Separator();
 
