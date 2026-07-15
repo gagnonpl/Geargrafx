@@ -300,6 +300,10 @@ static void memory_editor_menu(void)
                 config_debug.mem_editor_text_encoding == TEXT_ENCODING_SHIFT_JIS))
                 set_text_encoding(TEXT_ENCODING_SHIFT_JIS);
 
+            if (ImGui::MenuItem("Shift-JIS (byte-swapped)", NULL,
+                config_debug.mem_editor_text_encoding == TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED))
+                set_text_encoding(TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED);
+
             ImGui::EndMenu();
         }
 

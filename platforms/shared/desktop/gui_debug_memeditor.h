@@ -30,6 +30,7 @@ enum MemEditorTextEncoding
 {
     TEXT_ENCODING_ASCII = 0,
     TEXT_ENCODING_SHIFT_JIS = 1,
+    TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED = 2,
 };
 
 typedef void (*ContextMenuBreakpointCallback)(int editor, int start, int end);

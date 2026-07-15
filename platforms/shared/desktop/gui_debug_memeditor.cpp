@@ -124,7 +124,7 @@ static void append_utf8(std::string& out, int cp)
     }
 }
 
-static bool decode_sjis(const uint8_t* byte_ptr, int remaining, std::string& utf8, int* consumed)
+static bool decode_sjis(const uint8_t* byte_ptr, int remaining, std::string& utf8, int* consumed, bool byte_swapped = false)
 {
     *consumed = 0;
 
@@ -133,6 +133,40 @@ static bool decode_sjis(const uint8_t* byte_ptr, int remaining, std::string& utf
 
     auto c1 = *byte_ptr++;
 
+    if (remaining >= 2) // check double-byte first
+    {
+        uint8_t lead;
+        uint8_t trail;
+        if (byte_swapped)
+        {
+            lead = *byte_ptr;
+            trail = c1;
+        }
+        else
+        {
+            lead = c1;
+            trail = *byte_ptr;
+        }
+        if ((lead >= 0x81 && lead < 0xA0) || (lead >= 0xE0 && lead < 0xF0))
+        {
+            uint16_t sjis = (lead << 8) | trail;
+
+            if (trail >= 0x40 && trail <= 0xFC && trail != 0x7F &&
+                sjis >= SJIS_TO_UNICODE_BASE && sjis <= SJIS_TO_UNICODE_END)
+            {
+                uint32_t unicode = sjis_to_unicode[sjis - SJIS_TO_UNICODE_BASE];
+
+                if (unicode != 0)
+                {
+                    append_utf8(utf8, unicode);
+                    *consumed = 2;
+                    return true;
+                }
+            }
+        }
+    }
+
+    // single-byte
     if (c1 >= 0x20 && c1 < 0x7F) // ascii
     {
         if (c1 == 0x5C) // modified ascii yen (U+00A5)
@@ -143,27 +177,6 @@ static bool decode_sjis(const uint8_t* byte_ptr, int remaining, std::string& utf
             utf8.push_back((char)c1);
 
         *consumed = 1;
-        return true;
-    }
-    else if ((c1 >= 0x81 && c1 < 0xA0) || (c1 >= 0xE0 && c1 < 0xF0)) // double-byte
-    {
-        if (remaining < 2)
-            return false;
-
-        auto c2 = *byte_ptr;
-        if (c2 < 0x40 || c2 > 0xFC || c2 == 0x7F)
-            return false;
-
-        uint16_t sjis = (c1 << 8) | *byte_ptr;
-        if (sjis < SJIS_TO_UNICODE_BASE || sjis > SJIS_TO_UNICODE_END)
-            return false;
-
-        uint32_t unicode = sjis_to_unicode[sjis - SJIS_TO_UNICODE_BASE];
-        if (unicode == 0)
-            return false;
-
-        append_utf8(utf8, unicode);
-        *consumed = 2;
         return true;
     }
     else if (c1 >= 0xA1 && c1 < 0xE0) // single-byte katakana
@@ -215,6 +228,8 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
     const char* text_column_label = "ASCII";
     if (m_text_encoding == TEXT_ENCODING_SHIFT_JIS)
         text_column_label = "SHIFT-JIS";
+    else if (m_text_encoding == TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED)
+        text_column_label = "SHIFT-JIS (BYTE-SWAPPED)";
 
     if (options)
         footer_height += ImGui::GetFrameHeightWithSpacing();
@@ -301,9 +316,26 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
                     ImGui::TableNextRow();
                     int address = (row * m_options.bytes_per_row);
 
-                    bool skip_next_byte =
-                        address > 0 &&
-                        is_valid_sjis_pair(m_mem_data[address - 1], m_mem_data[address]);
+                    bool skip_next_byte = false;
+                    if (address > 0 &&
+                        (m_text_encoding == TEXT_ENCODING_SHIFT_JIS ||
+                            m_text_encoding == TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED))
+                    {
+                        std::string utf8;
+                        int consumed = 0;
+                        bool byte_swapped =
+                            (m_text_encoding == TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED);
+
+                        decode_sjis(
+                            &m_mem_data[address - 1],
+                            2,
+                            utf8,
+                            &consumed,
+                            byte_swapped
+                        );
+
+                        skip_next_byte = (consumed == 2);
+                    }
 
                     ImGui::TableNextColumn();
                     char single_addr[32];
@@ -493,7 +525,8 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
                                 ImGui::PushItemWidth(character_size.x);
 
 
-                                if (m_text_encoding == TEXT_ENCODING_SHIFT_JIS)
+                                if (m_text_encoding == TEXT_ENCODING_SHIFT_JIS ||
+                                    m_text_encoding == TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED)
                                 {
                                     if (skip_next_byte)
                                     {
@@ -506,11 +539,13 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
 
                                     std::string utf8;
                                     int consumed = 0;
+                                    bool byte_swapped = (m_text_encoding == TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED);
                                     bool valid_char = decode_sjis(
                                         &m_mem_data[byte_address],
                                         m_mem_size - byte_address,
                                         utf8,
-                                        &consumed
+                                        &consumed,
+                                        byte_swapped
                                     );
 
                                     if (valid_char)
@@ -1870,16 +1905,19 @@ void MemEditor::CopyAsText()
     std::string utf8;
     static const char* UTF8_REPLACEMENT = "\xEF\xBF\xBD";
 
-    if (m_text_encoding == TEXT_ENCODING_SHIFT_JIS)
+    if (m_text_encoding == TEXT_ENCODING_SHIFT_JIS ||
+        m_text_encoding == TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED)
     {
         for (int i = 0; i < size;)
         {
             int consumed = 0;
+            bool byte_swapped = (m_text_encoding == TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED);
             bool valid_char = decode_sjis(
                 data,
                 size - i,
                 utf8,
-                &consumed
+                &consumed,
+                byte_swapped
             );
 
             if (valid_char)
