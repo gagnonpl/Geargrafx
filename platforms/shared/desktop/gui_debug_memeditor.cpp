@@ -311,31 +311,12 @@ void MemEditor::Draw(bool ascii, bool preview, bool options, bool cursors)
 
             while (clipper.Step())
             {
+                bool skip_next_byte = false;
+
                 for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; row++)
                 {
                     ImGui::TableNextRow();
-                    int address = (row * m_options.bytes_per_row);
-
-                    bool skip_next_byte = false;
-                    if (address > 0 &&
-                        (m_text_encoding == TEXT_ENCODING_SHIFT_JIS ||
-                            m_text_encoding == TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED))
-                    {
-                        std::string utf8;
-                        int consumed = 0;
-                        bool byte_swapped =
-                            (m_text_encoding == TEXT_ENCODING_SHIFT_JIS_BYTE_SWAPPED);
-
-                        decode_sjis(
-                            &m_mem_data[address - 1],
-                            2,
-                            utf8,
-                            &consumed,
-                            byte_swapped
-                        );
-
-                        skip_next_byte = (consumed == 2);
-                    }
+                    int address = row * m_options.bytes_per_row;
 
                     ImGui::TableNextColumn();
                     char single_addr[32];
