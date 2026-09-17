@@ -16,6 +16,7 @@
  * along with this program.  If not, see http://www.gnu.org/licenses/
  *
  */
+#include <array>
 
 #define GUI_DEBUG_MEMORY_IMPORT
 #include "gui_debug_memory.h"
@@ -50,6 +51,12 @@ static bool memory_settings_read_data(std::istream& stream, void* data, size_t s
 static bool memory_settings_read_count(std::istream& stream, int& count, size_t record_size);
 static bool memory_settings_read_editor(std::istream& stream, std::vector<MemEditor::Bookmark>& bookmarks,
     std::vector<MemEditor::Watch>& watches, u32& total_records);
+static std::array<bool, MEMORY_EDITOR_MAX> mem_edit_visible = [] {
+    std::array<bool, MEMORY_EDITOR_MAX> a;
+    a.fill(true);
+    a[MEMORY_EDITOR_PHYSICAL] = false;
+    return a;
+}();
 
 void gui_debug_memory_init(void)
 {
@@ -99,7 +106,7 @@ void gui_debug_memory_reset(void)
     mem_edit[MEMORY_EDITOR_LOGICAL].Reset("LOGICAL", 0x10000, logical_memory_read, logical_memory_write, logical_memory_can_write, memory);
     mem_edit[MEMORY_EDITOR_LOGICAL].SetAddressFormatter(logical_memory_format_address, 7);
     mem_edit[MEMORY_EDITOR_PHYSICAL].Reset("PHYSICAL", 0x200000, physical_memory_read, physical_memory_write, physical_memory_can_write, memory);
-    mem_edit[MEMORY_EDITOR_RAM].Reset("SYSTEM RAM", memory->GetWorkingRAM(), 0x2000 * (is_sgx ? 4 : 1));
+    mem_edit[MEMORY_EDITOR_RAM].Reset("WRAM", memory->GetWorkingRAM(), 0x2000 * (is_sgx ? 4 : 1));
     mem_edit[MEMORY_EDITOR_ZERO_PAGE].Reset("ZP", memory->GetWorkingRAM(), 0x100);
     mem_edit[MEMORY_EDITOR_ROM].Reset("ROM", media->GetROM(), media->GetROMSize());
     mem_edit[MEMORY_EDITOR_CARD_RAM].Reset("CARD RAM", memory->GetCardRAM(), memory->GetCardRAMSize());
@@ -132,7 +139,7 @@ void gui_debug_window_memory(void)
 
     memory_editor_menu();
 
-    if (ImGui::BeginTabBar("##memory_tabs", ImGuiTabBarFlags_None))
+    if (ImGui::BeginTabBar("##memory_tabs", ImGuiTabBarFlags_Reorderable))
     {
         draw_tabs();
         ImGui::EndTabBar();
@@ -266,6 +273,9 @@ static void draw_tabs(void)
         if (i == MEMORY_EDITOR_ARCADE_RAM && !is_arcade_card)
             continue;
         if (i == MEMORY_EDITOR_MB128 && !core->GetInput()->GetMB128()->IsConnected())
+            continue;
+
+        if (!mem_edit_visible[i])
             continue;
 
         if (ImGui::BeginTabItem(mem_edit[i].GetTitle(), NULL, mem_edit_select == i ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))
@@ -524,6 +534,14 @@ static void memory_editor_menu(void)
         {
             mem_edit[current_mem_edit].OpenFindText();
         }
+
+        ImGui::EndMenu();
+    }
+
+    if (ImGui::BeginMenu("View"))
+    {
+        for (int i = 0; i < MEMORY_EDITOR_MAX; i++)
+            ImGui::MenuItem(mem_edit[i].GetTitle(), NULL, &mem_edit_visible[i]);
 
         ImGui::EndMenu();
     }
