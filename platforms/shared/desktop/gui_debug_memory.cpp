@@ -140,11 +140,42 @@ void gui_debug_window_memory(void)
 
     memory_editor_menu();
 
+    GeargrafxCore* core = emu_get_core();
+    Media* media = core->GetMedia();
+
+    u32 tab_state =
+        (media->IsSGX() ? (1u << 0) : 0)
+        | (media->IsCDROMHardwareEnabled() ? (1u << 1) : 0)
+        | (media->IsArcadeCard() ? (1u << 2) : 0)
+        | (IsValidPointer(media->GetROM()) ? (1u << 3) : 0)
+        | (core->GetMemory()->GetCardRAMSize() != 0 ? (1u << 4) : 0)
+        | (core->GetMemory()->IsBackupRamEnabled() ? (1u << 5) : 0)
+        | (core->GetInput()->GetMB128()->IsConnected() ? (1u << 6) : 0);
+
+    for (int i = 0; i < MEMORY_EDITOR_MAX; i++)
+    {
+        if (mem_edit_visible[i])
+            tab_state |= (1u << (8 + i));
+    }
+
+    static u32 previous_tab_state = ~0u;
+    static int tab_bar_generation = 0;
+
+    if (tab_state != previous_tab_state)
+    {
+        previous_tab_state = tab_state;
+        tab_bar_generation++;
+    }
+
+    ImGui::PushID(tab_bar_generation);
+
     if (ImGui::BeginTabBar("##memory_tabs", ImGuiTabBarFlags_Reorderable))
     {
         draw_tabs();
         ImGui::EndTabBar();
     }
+
+    ImGui::PopID();
 
     ImGui::End();
     ImGui::PopStyleVar();
