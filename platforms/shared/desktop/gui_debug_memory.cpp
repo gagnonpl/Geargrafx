@@ -237,27 +237,30 @@ static void draw_tabs(void)
 
     static const int tab_order[MEMORY_EDITOR_MAX] =
     {
-        MEMORY_EDITOR_LOGICAL,
-        MEMORY_EDITOR_PHYSICAL,
-        MEMORY_EDITOR_RAM,
         MEMORY_EDITOR_ZERO_PAGE,
+        MEMORY_EDITOR_RAM,
         MEMORY_EDITOR_CDROM_RAM,
+        MEMORY_EDITOR_CARD_RAM,
+        MEMORY_EDITOR_ARCADE_RAM,
         MEMORY_EDITOR_ROM,
         MEMORY_EDITOR_VRAM_1,
         MEMORY_EDITOR_VRAM_2,
         MEMORY_EDITOR_SAT_1,
         MEMORY_EDITOR_SAT_2,
-        MEMORY_EDITOR_PALETTES,
-        MEMORY_EDITOR_CARD_RAM,
-        MEMORY_EDITOR_BACKUP_RAM,
         MEMORY_EDITOR_ADPCM_RAM,
-        MEMORY_EDITOR_ARCADE_RAM,
-        MEMORY_EDITOR_MB128
+        MEMORY_EDITOR_MB128,
+        MEMORY_EDITOR_PALETTES,
+        MEMORY_EDITOR_BACKUP_RAM,
+        MEMORY_EDITOR_LOGICAL,
+        MEMORY_EDITOR_PHYSICAL,
     };
 
     for (int tab = 0; tab < MEMORY_EDITOR_MAX; tab++)
     {
         int i = tab_order[tab];
+
+        if (!mem_edit_visible[i])
+            continue;
 
         if (!is_sgx && (i == MEMORY_EDITOR_VRAM_2 || i == MEMORY_EDITOR_SAT_2))
             continue;
@@ -274,9 +277,6 @@ static void draw_tabs(void)
         if (i == MEMORY_EDITOR_ARCADE_RAM && !is_arcade_card)
             continue;
         if (i == MEMORY_EDITOR_MB128 && !core->GetInput()->GetMB128()->IsConnected())
-            continue;
-
-        if (!mem_edit_visible[i])
             continue;
 
         if (ImGui::BeginTabItem(mem_edit[i].GetTitle(), NULL, mem_edit_select == i ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None))

@@ -421,6 +421,14 @@ void gui_debug_go_back(void)
     goto_back_requested = true;
 }
 
+static void goto_pc(void)
+{
+    HuC6280* processor = emu_get_core()->GetHuC6280();
+    HuC6280::HuC6280_State* proc_state = processor->GetState();
+    u16 pc = proc_state->PC->GetValue();
+    request_goto_live_address(pc);
+}
+
 void gui_debug_window_disassembler(void)
 {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
@@ -428,6 +436,11 @@ void gui_debug_window_disassembler(void)
     ImGui::SetNextWindowSize(ImVec2(458, 553), ImGuiCond_FirstUseEver);
 
     ImGui::Begin("Disassembler", &config_debug.show_disassembler, ImGuiWindowFlags_MenuBar);
+
+    if (ImGui::IsKeyPressed(ImGuiKey_F4))
+    {
+        goto_pc();
+    }
 
     disassembler_menu();
 
@@ -2582,12 +2595,9 @@ static void disassembler_menu(void)
             gui_debug_go_back();
         }
 
-        if (ImGui::MenuItem("Go To PC"))
+        if (ImGui::MenuItem("Go To PC", "F4"))
         {
-            HuC6280* processor = emu_get_core()->GetHuC6280();
-            HuC6280::HuC6280_State* proc_state = processor->GetState();
-            u16 pc = proc_state->PC->GetValue();
-            request_goto_live_address(pc);
+            goto_pc();
         }
 
         if (ImGui::BeginMenu("Go To Address..."))
