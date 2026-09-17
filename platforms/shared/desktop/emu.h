@@ -21,6 +21,7 @@
 #define EMU_H
 
 #include "geargrafx.h"
+#include "turbolink/turbolink_manager.h"
 
 #ifdef EMU_IMPORT
     #define EXTERN
@@ -58,6 +59,7 @@ EXTERN int emu_debug_tiles_palette[2];
 EXTERN Debug_Command emu_debug_command;
 EXTERN bool emu_debug_pc_changed;
 EXTERN int emu_debug_step_frames_pending;
+EXTERN u64 emu_frame_counter;
 EXTERN u64 emu_debug_get_frame_counter(void);
 EXTERN void emu_debug_reset_frame_counter(void);
 EXTERN void emu_debug_set_frame_counter_enabled(bool enabled);
@@ -85,7 +87,8 @@ EXTERN bool emu_is_debug_idle(void);
 EXTERN bool emu_is_empty(void);
 EXTERN void emu_reset(void);
 EXTERN bool emu_eject_physical_cdrom(void);
-EXTERN void emu_audio_huc6280a(bool enabled);
+EXTERN void emu_audio_psg_revision(int revision);
+EXTERN void emu_audio_adpcm_clock_speed(int mode, float clock_speed);
 EXTERN void emu_audio_mute(bool mute);
 EXTERN void emu_audio_set_master_volume(float volume);
 EXTERN void emu_audio_psg_volume(float volume);
@@ -102,14 +105,17 @@ EXTERN void emu_save_state_file(const char* file_path);
 EXTERN void emu_load_state_file(const char* file_path);
 EXTERN void update_savestates_data(void);
 EXTERN void emu_get_runtime(GG_Runtime_Info& runtime);
+EXTERN double emu_get_frame_rate(void);
 EXTERN void emu_get_info(char* info, int buffer_size);
 EXTERN GeargrafxCore* emu_get_core(void);
 EXTERN void emu_debug_step_over(void);
 EXTERN void emu_debug_step_into(void);
 EXTERN void emu_debug_step_out(void);
 EXTERN void emu_debug_step_frame(void);
+EXTERN void emu_debug_step_frames(int frames);
 EXTERN void emu_debug_break(void);
 EXTERN void emu_debug_continue(void);
+EXTERN void emu_set_disassembler_syntax(int syntax);
 EXTERN void emu_set_palette(int palette);
 EXTERN void emu_set_custom_palette(const u8* data);
 EXTERN void emu_video_no_sprite_limit(bool enabled);
@@ -143,12 +149,25 @@ EXTERN bool emu_load_bios(const char* file_path, bool syscard);
 EXTERN void emu_start_vgm_recording(const char* file_path);
 EXTERN void emu_stop_vgm_recording(void);
 EXTERN bool emu_is_vgm_recording(void);
-EXTERN void emu_mcp_set_transport(int mode, int tcp_port);
+EXTERN void emu_mcp_set_transport(int mode, int tcp_port, const char* tcp_address);
 EXTERN void emu_mcp_start(void);
 EXTERN void emu_mcp_stop(void);
 EXTERN bool emu_mcp_is_running(void);
 EXTERN int emu_mcp_get_transport_mode(void);
+EXTERN const char* emu_mcp_get_http_address(void);
+EXTERN int emu_mcp_get_http_port(void);
 EXTERN void emu_mcp_pump_commands(void);
+EXTERN bool emu_turbolink_connect(int session);
+EXTERN void emu_turbolink_stop(void);
+EXTERN void emu_turbolink_pump(void);
+EXTERN bool emu_turbolink_is_active(void);
+EXTERN bool emu_turbolink_is_core_suspended(void);
+EXTERN bool emu_turbolink_is_cable_connected(void);
+EXTERN bool emu_turbolink_has_remote_peer(void);
+EXTERN bool emu_turbolink_is_pacing_peer(void);
+EXTERN TurboLinkStatus emu_turbolink_get_status(void);
+EXTERN void emu_turbolink_reset_metrics(void);
+EXTERN void emu_turbolink_set_normal_barrier_stall_us(u32 stall_us);
 EXTERN void emu_reset_rewind_timing(void);
 
 #undef EMU_IMPORT

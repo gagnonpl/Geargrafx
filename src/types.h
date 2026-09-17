@@ -38,6 +38,7 @@ struct GG_Runtime_Info
     int screen_width;
     int screen_height;
     int width_scale;
+    double fps;
 };
 
 enum GG_Console_Type
@@ -101,6 +102,13 @@ enum GG_MB128_Mode
     GG_MB128_DISABLED
 };
 
+enum GG_PSG_Revision
+{
+    GG_PSG_REVISION_AUTO = 0,
+    GG_PSG_REVISION_HUC6280,
+    GG_PSG_REVISION_HUC6280A
+};
+
 enum GG_Controllers
 {
     GG_CONTROLLER_1 = 0,
@@ -140,6 +148,14 @@ struct GG_SaveState_Screenshot
     u8 width_scale;
 };
 
+enum GG_Disassembler_Syntax
+{
+    GG_Disassembler_Syntax_Geargrafx = 0,
+    GG_Disassembler_Syntax_PCEAS,
+    GG_Disassembler_Syntax_WLADX,
+    GG_Disassembler_Syntax_Count
+};
+
 struct GG_Disassembler_Record
 {
     u32 address;
@@ -157,6 +173,9 @@ struct GG_Disassembler_Record
     bool has_operand_address;
     u16 operand_address;
     bool operand_is_zp;
+    u8 operand_bank;
+    int operand_offset;
+    int operand_length;
     char auto_symbol[64];
 };
 

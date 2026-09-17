@@ -127,10 +127,13 @@ EXTERN bool gui_init(void);
 EXTERN void gui_destroy(void);
 EXTERN void gui_render(void);
 EXTERN void gui_shortcut(gui_ShortCutEvent event);
-EXTERN void gui_load_rom(const char* path);
+EXTERN bool gui_load_rom(const char* path, const char* symbol_path = NULL);
+EXTERN bool gui_is_rom_loading(void);
+EXTERN bool gui_finish_loading_rom(void);
 EXTERN void gui_load_physical_cdrom(const char* device_id);
 EXTERN void gui_load_bios(const char* path, bool syscard);
 EXTERN void gui_load_palette(const char* path);
+EXTERN void gui_set_style(void);
 EXTERN void gui_set_status_message(const char* message, Uint64 milliseconds);
 EXTERN void gui_set_error_message(const char* message);
 

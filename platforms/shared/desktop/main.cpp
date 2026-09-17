@@ -18,6 +18,7 @@
  */
 
 #include <SDL3/SDL_main.h>
+#include <stdlib.h>
 #include "geargrafx.h"
 #include "application.h"
 #include "application_headless.h"
@@ -25,26 +26,23 @@
 #include "console_utils.h"
 
 extern bool g_mcp_stdio_mode;
+extern bool g_mcp_router_enabled;
 
 int main(int argc, char* argv[])
 {
     attach_parent_console(argc, argv);
 
-    char* rom_file = NULL;
-    char* symbol_file = NULL;
+    ApplicationParams app_params;
     bool show_usage = false;
-    bool force_fullscreen = false;
-    bool force_windowed = false;
-    int mcp_mode = -1; // -1 = disabled, 0 = stdio, 1 = tcp
-    int mcp_tcp_port = 7777;
     int ret = 0;
     bool mcp_stdio_set = false;
     bool mcp_http_set = false;
     bool headless = false;
+    bool portable = false;
 
     for (int i = 1; i < argc; i++)
     {
-        if (argv[i][0] == '-')
+        if (argv[i][0] == '-' || strcmp(argv[i], "/?") == 0)
         {
             if ((strcmp(argv[i], "-h") == 0) || (strcmp(argv[i], "-?") == 0) ||
                 (strcmp(argv[i], "--help") == 0) || (strcmp(argv[i], "/?") == 0))
@@ -61,38 +59,84 @@ int main(int argc, char* argv[])
             }
             else if ((strcmp(argv[i], "-f") == 0) || (strcmp(argv[i], "--fullscreen") == 0))
             {
-                force_fullscreen = true;
+                app_params.force_fullscreen = true;
             }
             else if ((strcmp(argv[i], "-w") == 0) || (strcmp(argv[i], "--windowed") == 0))
             {
-                force_windowed = true;
+                app_params.force_windowed = true;
             }
             else if (strcmp(argv[i], "--mcp-stdio") == 0)
             {
                 g_mcp_stdio_mode = true;  // Disable logging immediately
                 mcp_stdio_set = true;
-                mcp_mode = 0;
+                app_params.mcp_mode = 0;
             }
             else if (strcmp(argv[i], "--mcp-http") == 0)
             {
                 mcp_http_set = true;
-                mcp_mode = 1;
+                app_params.mcp_mode = 1;
+            }
+            else if ((strcmp(argv[i], "--mcp-router") == 0) || (strcmp(argv[i], "--mcp-enable-router") == 0))
+            {
+                g_mcp_router_enabled = true;
             }
             else if (strcmp(argv[i], "--headless") == 0)
             {
                 headless = true;
             }
+            else if (strcmp(argv[i], "--portable") == 0)
+            {
+                portable = true;
+            }
             else if (strcmp(argv[i], "--mcp-http-port") == 0)
             {
-                if (i + 1 < argc)
+                if (i + 1 >= argc || argv[i + 1][0] == '-')
                 {
-                    mcp_tcp_port = atoi(argv[++i]);
-                    if (mcp_tcp_port <= 0 || mcp_tcp_port > 65535)
-                    {
-                        printf("Invalid port number: %d\n", mcp_tcp_port);
-                        mcp_tcp_port = 7777;
-                    }
+                    fprintf(stderr, "Missing value for --mcp-http-port\n");
+                    return -1;
                 }
+
+                char* end = NULL;
+                long port = strtol(argv[++i], &end, 10);
+                if (!end || *end != '\0' || port <= 0 || port > 65535)
+                {
+                    fprintf(stderr, "Invalid port number: %s\n", argv[i]);
+                    return -1;
+                }
+                app_params.mcp_tcp_port = (int)port;
+                app_params.mcp_tcp_port_set = true;
+            }
+            else if (strcmp(argv[i], "--mcp-http-address") == 0)
+            {
+                if (i + 1 >= argc || argv[i + 1][0] == '-')
+                {
+                    fprintf(stderr, "Missing value for --mcp-http-address\n");
+                    return -1;
+                }
+
+                app_params.mcp_http_address = argv[++i];
+                app_params.mcp_http_address_set = true;
+            }
+            else if (strcmp(argv[i], "--turbolink-join") == 0)
+            {
+                if (i + 1 >= argc || argv[i + 1][0] == '-')
+                {
+                    fprintf(stderr, "Missing value for --turbolink-join\n");
+                    return -1;
+                }
+
+                char* end = NULL;
+                long session = strtol(argv[++i], &end, 10);
+
+                if (!end || *end != '\0' || session <= 0 || session > 255)
+                {
+                    fprintf(stderr, "Invalid TurboLink session: %s\n",
+                        argv[i]);
+                    return -1;
+                }
+
+                app_params.turbolink_session = (int)session;
+                app_params.turbolink_session_set = true;
             }
             else
             {
@@ -106,22 +150,24 @@ int main(int argc, char* argv[])
     int non_option_count = 0;
     for (int i = 1; i < argc; i++)
     {
-        if (strcmp(argv[i], "--mcp-http-port") == 0)
+        if ((strcmp(argv[i], "--mcp-http-port") == 0) ||
+            (strcmp(argv[i], "--mcp-http-address") == 0) ||
+            (strcmp(argv[i], "--turbolink-join") == 0))
         {
             if (i + 1 < argc)
                 i++;
             continue;
         }
 
-        if (argv[i][0] != '-')
+        if (argv[i][0] != '-' && strcmp(argv[i], "/?") != 0)
         {
             if (non_option_count == 0)
-                rom_file = argv[i];
+                app_params.rom_file = argv[i];
             else if (non_option_count == 1)
-                symbol_file = argv[i];
-            
+                app_params.symbol_file = argv[i];
+
             non_option_count++;
-            
+
             if (non_option_count > 2)
             {
                 show_usage = true;
@@ -140,33 +186,55 @@ int main(int argc, char* argv[])
     if (show_usage)
     {
         printf("Usage: %s [options] [game_file] [symbol_file]\n", argv[0]);
-        printf("  [game_file]         Game file: accepts ROMs (.pce, .sgx, .hes), CUE (.cue) or ZIP (.zip)\n");
+        printf("\nArguments:\n");
+        printf("  [game_file]                 Game file: accepts ROMs (.pce, .sgx, .hes), CUE (.cue) or ZIP (.zip)\n");
+        printf("  [symbol_file]               Optional symbol file for debugging\n");
         printf("\nOptions:\n");
-        printf("  -f, --fullscreen      Start in fullscreen mode\n");
-        printf("  -w, --windowed        Start in windowed mode with menu visible\n");
-        printf("      --mcp-stdio       Auto-start MCP server with stdio transport\n");
-        printf("      --mcp-http        Auto-start MCP server with HTTP transport\n");
-        printf("      --mcp-http-port N HTTP port for MCP server (default: 7777)\n");
-        printf("      --headless        Run without GUI (requires --mcp-stdio or --mcp-http)\n");
-        printf("  -v, --version         Display version information\n");
-        printf("  -h, --help            Display this help message\n");
+        printf("  -f, --fullscreen            Start in fullscreen mode\n");
+        printf("  -w, --windowed              Start in windowed mode with menu visible\n");
+        printf("      --mcp-stdio             Auto-start MCP server with stdio transport\n");
+        printf("      --mcp-http              Auto-start MCP server with HTTP transport\n");
+        printf("      --mcp-router            Enable compact MCP tool routing\n");
+        printf("      --mcp-http-address A    HTTP bind address (default: 127.0.0.1)\n");
+        printf("      --mcp-http-port N       HTTP port for MCP server (default: 7777)\n");
+        printf("      --turbolink-join N      Join local TurboLink shared session 1-255\n");
+        printf("      --headless              Run without GUI (requires MCP or TurboLink)\n");
+        printf("      --portable              Store configuration and user data beside the application\n");
+        printf("  -v, --version               Display version information\n");
+        printf("  -h, --help                  Display this help message\n");
         return ret;
     }
 
-    if (force_fullscreen && force_windowed)
-        force_fullscreen = false;
+    if (app_params.force_fullscreen && app_params.force_windowed)
+        app_params.force_fullscreen = false;
 
-    config_init();
+    config_init(portable);
     config_read();
+
+    if (app_params.mcp_tcp_port_set)
+        config_emulator.mcp_tcp_port = app_params.mcp_tcp_port;
+    else
+        app_params.mcp_tcp_port = config_emulator.mcp_tcp_port;
+
+    if (app_params.mcp_http_address_set)
+        config_emulator.mcp_http_address = app_params.mcp_http_address;
+    else
+        app_params.mcp_http_address = config_emulator.mcp_http_address;
+
+    if (app_params.turbolink_session_set)
+        config_emulator.turbolink_session = app_params.turbolink_session;
+    else
+        app_params.turbolink_session = config_emulator.turbolink_session;
 
     if (headless)
     {
-        ret = application_headless_init(rom_file, symbol_file, mcp_mode, mcp_tcp_port);
+        ret = application_headless_init(app_params);
 
         if (ret == 0)
+        {
             application_headless_mainloop();
-
-        application_headless_destroy();
+            application_headless_destroy();
+        }
 
         config_write();
         config_destroy();
@@ -174,13 +242,13 @@ int main(int argc, char* argv[])
         return ret;
     }
 
-    if (!application_check_single_instance(rom_file, symbol_file))
+    if (!application_check_single_instance(app_params.rom_file, app_params.symbol_file))
     {
         config_destroy();
         return 0;
     }
 
-    ret = application_init(rom_file, symbol_file, force_fullscreen, force_windowed, mcp_mode, mcp_tcp_port);
+    ret = application_init(app_params);
 
     if (ret == 0)
         application_mainloop();

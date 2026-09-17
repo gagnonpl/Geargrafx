@@ -44,6 +44,7 @@
 #define GG_MAX_GAMEPADS 5
 
 #define GG_AUDIO_SAMPLE_RATE 44100
+#define GG_ADPCM_DEFAULT_CLOCK_SPEED 32100.0f
 #define GG_AUDIO_BUFFER_SIZE 2048
 #define GG_AUDIO_QUEUE_SIZE 1500
 #define GG_PSG_CYCLES_PER_SAMPLE 81
@@ -52,7 +53,7 @@
 #define GG_BIOS_SYSCARD_SIZE 0x40000
 #define GG_BIOS_GAME_EXPRESS_SIZE 0x8000
 
-#define GG_SAVESTATE_VERSION 31
+#define GG_SAVESTATE_VERSION 38
 #define GG_SAVESTATE_MIN_VERSION 23
 #define GG_SAVESTATE_MAGIC 0x82190619
 
@@ -87,6 +88,14 @@
 #else
     #define INLINE inline
     #define NO_INLINE
+#endif
+
+#if defined(__GNUC__) || defined(__clang__)
+    #define likely(x)   __builtin_expect(!!(x), 1)
+    #define unlikely(x) __builtin_expect(!!(x), 0)
+#else
+    #define likely(x)   (x)
+    #define unlikely(x) (x)
 #endif
 
 #if !defined(GG_DEBUG)

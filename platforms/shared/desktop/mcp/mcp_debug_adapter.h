@@ -98,7 +98,7 @@ public:
     void StepInto();
     void StepOver();
     void StepOut();
-    void StepFrame();
+    void StepFrame(int frames = 1);
     void Reset();
     json GetDebugStatus();
     json RunToAddress(u16 address);
@@ -116,7 +116,7 @@ public:
     // Memory areas (matching debugger memory editor)
     std::vector<MemoryAreaInfo> ListMemoryAreas();
     std::vector<u8> ReadMemoryArea(int area, u32 offset, size_t size);
-    void WriteMemoryArea(int area, u32 offset, const std::vector<u8>& data);
+    size_t WriteMemoryArea(int area, u32 offset, const std::vector<u8>& data);
 
     // Disassembly (using existing disassembler records)
     std::vector<DisasmLine> GetDisassembly(u16 start_address, u16 end_address, int bank = -1, bool resolve_symbols = false);
@@ -141,17 +141,24 @@ public:
     // Media and state management
     json GetMediaInfo();
     json ListRecentMedia();
-    json LoadMedia(const std::string& file_path);
+    json StartLoadMedia(const std::string& file_path);
+    bool IsMediaLoading() const;
+    json FinishLoadMedia(const std::string& file_path);
     json LoadBios(const std::string& file_path, bool syscard);
     json ListSaveStateSlots();
     json SelectSaveStateSlot(int slot);
     json SaveState();
     json LoadState();
+    json SaveStateFile(const std::string& file_path);
+    json LoadStateFile(const std::string& file_path);
     json SetFastForwardSpeed(int speed);
     json ToggleFastForward(bool enabled);
 
     // Controller input
     json ControllerButton(int player, const std::string& button, const std::string& action);
+    json GetInputState();
+    json GetTurboLinkStatus();
+    json ResetTurboLinkMetrics();
     json ControllerSetType(int player, const std::string& type);
     json ControllerSetTurboTap(bool enabled);
     json ControllerGetType(int player);
@@ -166,6 +173,8 @@ public:
     json RemoveSymbol(u8 bank, u16 address);
     json LoadSymbols(const std::string& file_path);
     json ListSymbols();
+    json LookupSymbolByName(const std::string& name);
+    json LookupSymbolAtAddress(u8 bank, u16 address);
     json ListCallStack();
 
     // Memory area operations
@@ -180,9 +189,11 @@ public:
     json ListMemoryWatches(int area);
     json MemorySearchCapture(int area);
     json MemorySearch(int area, const std::string& op, const std::string& compare_type, int compare_value, const std::string& data_type);
-    json MemoryFindBytes(int area, const std::string& hex_bytes);
-    json GetTraceLog(int start, int count);
-    json SetTraceLog(bool enabled, u32 flags);
+    json MemoryFind(int area, const std::string& value, bool text, bool case_sensitive);
+    json GetTraceLog(s64 start, int count);
+    json SetTraceLog(bool enabled, u32 flags, const std::string& output,
+        const std::string& memory_size, const std::string& disk_size,
+        const std::string& output_path, const u32* event_filters);
 
     // Rewind
     json GetRewindStatus();

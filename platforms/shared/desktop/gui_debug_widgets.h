@@ -57,7 +57,7 @@ inline bool EditableRegister1(
     const char* bit_str = current_value ? "1" : "0";
     ImVec4 color = current_value ? true_color : false_color;
 
-    if (write_callback != nullptr)
+    if (write_callback != NULL)
     {
         ImGui::PushStyleColor(ImGuiCol_Text, color);
         if (ImGui::Selectable(bit_str, false, ImGuiSelectableFlags_None, ImGui::CalcTextSize(bit_str)))
@@ -158,7 +158,7 @@ inline bool EditableRegister8(
         char value_str[16];
         snprintf(value_str, sizeof(value_str), "$%02X", current_value);
 
-        if (write_callback != nullptr)
+        if (write_callback != NULL)
         {
             if (ImGui::Selectable(value_str, false, 0, ImVec2(0, 0)))
             {
@@ -267,7 +267,7 @@ inline bool EditableRegister16(
         char value_str[16];
         snprintf(value_str, sizeof(value_str), "$%04X", current_value);
 
-        if (write_callback != nullptr)
+        if (write_callback != NULL)
         {
             if (ImGui::Selectable(value_str, false, 0, ImVec2(0, 0)))
             {
@@ -314,17 +314,31 @@ inline bool SliderIntWithSteps(const char* label, int* v, int v_min, int v_max, 
     if (v_step <= 0)
         v_step = 1;
 
-    int v_i = *v;
-    bool value_changed = ImGui::SliderInt(label, &v_i, v_min, v_max, display_format, ImGuiSliderFlags_AlwaysClamp);
+    int old_value = *v;
+    int step_count = (v_max - v_min + v_step - 1) / v_step;
+    int value = CLAMP(*v, v_min, v_max);
+    int step = (value - v_min + v_step / 2) / v_step;
+    ImGui::SliderInt(label, &step, 0, step_count, "",
+        ImGuiSliderFlags_AlwaysClamp | ImGuiSliderFlags_NoInput);
+    *v = MIN(v_min + step * v_step, v_max);
 
-    int diff = v_i - v_min;
-    int remain = diff % v_step;
+    char value_text[64];
+    const char* value_placeholder = strstr(display_format, "%d");
+    if (value_placeholder)
+    {
+        int prefix_length = (int)(value_placeholder - display_format);
+        snprintf(value_text, sizeof(value_text), "%.*s%d%s", prefix_length, display_format, *v, value_placeholder + 2);
+    }
+    else
+        snprintf(value_text, sizeof(value_text), "%d", *v);
+    ImVec2 item_min = ImGui::GetItemRectMin();
+    ImVec2 item_max = ImGui::GetItemRectMax();
+    ImVec2 text_size = ImGui::CalcTextSize(value_text);
+    ImVec2 text_pos(item_min.x + (item_max.x - item_min.x - text_size.x) * 0.5f,
+        item_min.y + (item_max.y - item_min.y - text_size.y) * 0.5f);
+    ImGui::GetWindowDrawList()->AddText(text_pos, ImGui::GetColorU32(ImGuiCol_Text), value_text);
 
-    if (remain < 0)
-        remain += v_step;
-
-    *v = v_i - remain;
-    return value_changed;
+    return *v != old_value;
 }
 
 #endif // GUI_DEBUG_WIDGETS_H

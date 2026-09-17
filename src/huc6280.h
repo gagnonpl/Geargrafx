@@ -46,7 +46,9 @@
 
 class Memory;
 class HuC6202;
+class Random;
 class TraceLogger;
+enum GG_Trace_Type : u8;
 
 typedef void (*GG_Clock_Hardware_Fn)(void* context, u32 master_cycles);
 
@@ -114,14 +116,15 @@ public:
     };
 
 public:
-    HuC6280();
+    HuC6280(Random* random);
     ~HuC6280();
     void Init(Memory* memory, HuC6202* huc6202);
     void Reset();
     u32 RunInstruction(bool* completed = NULL);
     void SetHardwareClock(GG_Clock_Hardware_Fn clock_fn, void* context);
-    u32 ConsumeClockedMasterCycles();
+    u32 GetClockedMasterCycles() const;
     void ClockCountedCycles(unsigned int cycles);
+    void ClockPendingCycles();
     void StallFastCycle();
     void ClockTimer(u32 cycles);
     void AssertIRQ1(bool asserted);
@@ -137,9 +140,11 @@ public:
     void DisassembleAhead(u16 start_address, int count, int depth);
     void SetResetValue(int value);
     void EnableBreakpoints(bool enable, bool irqs);
+    void SetDebugBRK(bool enable, u8 value, bool trigger_irq);
     bool BreakpointHit();
     bool MemoryBreakpointHit();
     bool RunToBreakpointHit();
+    bool GetBreakpointHitAddress(u16* address);
     void ResetBreakpoints();
     bool AddBreakpoint(int type, const char* text, bool read, bool write, bool execute);
     bool AddBreakpoint(u16 address);
@@ -158,6 +163,8 @@ public:
     bool HasPhysicalMemoryBreakpoints(bool read) const;
     bool HasPhysicalExecuteBreakpoints() const;
     const std::vector<GG_Breakpoint>* GetBreakpoints() const;
+    void SetDisassemblerSyntax(GG_Disassembler_Syntax syntax);
+    GG_Disassembler_Syntax GetDisassemblerSyntax() const;
     void MoveBreakpoint(int from, int to);
     void ClearDisassemblerCallStack();
     std::stack<GG_CallStackEntry>* GetDisassemblerCallStack();
@@ -167,7 +174,15 @@ public:
     void LoadState(std::istream& stream);
 
 private:
-    typedef void (HuC6280::*opcodeptr) (void);
+    typedef void (HuC6280::*opcode_member_ptr) (void);
+    typedef void (*opcodeptr) (HuC6280*);
+
+    template<opcode_member_ptr Opcode>
+    static void OPCodeThunk(HuC6280* cpu)
+    {
+        (cpu->*Opcode)();
+    }
+
     opcodeptr m_opcodes[256];
     SixteenBitRegister m_PC;
     EightBitRegister m_A;
@@ -186,6 +201,7 @@ private:
     u16 m_transfer_dest;
     Memory* m_memory;
     HuC6202* m_huc6202;
+    Random* m_random;
     TraceLogger* m_trace_logger;
     HuC6280_State m_processor_state;
     bool m_timer_enabled;
@@ -206,17 +222,26 @@ private:
     bool m_breakpoints_irq_enabled;
     bool m_cpu_breakpoint_hit;
     bool m_memory_breakpoint_hit;
+    bool m_debug_brk_breakpoint_hit;
+    bool m_breakpoint_hit_address_valid;
+    u16 m_breakpoint_hit_address;
     bool m_run_to_breakpoint_hit;
     std::vector<GG_Breakpoint> m_breakpoints;
     GG_Breakpoint m_run_to_breakpoint;
     bool m_run_to_breakpoint_requested;
+    bool m_debug_brk_enabled;
+    u8 m_debug_brk_value;
+    bool m_debug_brk_trigger_irq;
+    u16 m_prev_opcode_address;
     std::stack<GG_CallStackEntry> m_disassembler_call_stack;
+    GG_Disassembler_Syntax m_disassembler_syntax;
     int m_reset_value;
 
 private:
 
     void HandleIRQ();
     void CheckIRQs();
+    void SetBreakpointHitAddress(u16 address);
     void ClockHardwareCycles(u32 master_cycles);
 
     void CheckBreakpoints();
@@ -267,8 +292,18 @@ private:
 
     void PopulateDisassemblerRecord(GG_Disassembler_Record* record, u8 opcode, u16 address);
     void PopulateUnavailableDisassemblerRecord(GG_Disassembler_Record* record, u16 address);
+    void SetDisassemblerOperandText(GG_Disassembler_Record* record, const char* text);
+    void SetDisassemblerOperand(GG_Disassembler_Record* record, u16 address, bool is_zp, const char* text);
     void SetDisassemblerRecordSegment(GG_Disassembler_Record* record);
     void InvalidateOverlappingRecords(u16 address, u8 opcode_size);
+    void TraceCpuEvent();
+    void LogCpuEvent();
+    void TraceCpuIrqEvent(u16 pc, u16 vector);
+    void LogCpuIrqEvent(u16 pc, u16 vector);
+    void TraceTimerEvent(u8 event, u8 value);
+    void LogTimerEvent(u8 event, u8 value);
+    void TraceSystemInterruptEvent(u8 event, u16 address, u8 raw);
+    void LogSystemInterruptEvent(u8 event, u16 address, u8 raw);
 
     void UnofficialOPCode();
     void OPCodes_ADC(u8 value);
@@ -313,7 +348,7 @@ private:
     void OPCodes_TransferStart();
     void OPCodes_TransferEnd();
 
-    void InitOPCodeFunctors();
+    void InitOPCodeTable();
 
     void OPCode0x00(); void OPCode0x01(); void OPCode0x02(); void OPCode0x03();
     void OPCode0x04(); void OPCode0x05(); void OPCode0x06(); void OPCode0x07();

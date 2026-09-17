@@ -22,10 +22,12 @@
     <ClCompile Include="..\..\src\adpcm.cpp" />
     <ClCompile Include="..\..\src\audio.cpp" />
     <ClCompile Include="..\..\src\arcade_card_mapper.cpp" />
+    <ClCompile Include="..\..\src\cdrom_chd_file_adapter.cpp" />
     <ClCompile Include="..\..\src\cdrom_chd_image.cpp" />
     <ClCompile Include="..\..\src\cdrom_cuebin_image.cpp" />
-    <ClCompile Include="..\..\src\cdrom_file.cpp" />
-    <ClCompile Include="..\..\src\cdrom_file_native.cpp" />
+    <ClCompile Include="..\..\src\media_file.cpp" />
+    <ClCompile Include="..\..\src\media_file_native.cpp" />
+    <ClCompile Include="..\..\src\ogg_vorbis_decoder.cpp" />
     <ClCompile Include="..\..\src\cdrom_image.cpp" />
     <ClCompile Include="..\..\src\media.cpp" />
     <ClCompile Include="..\..\src\cdrom_audio.cpp" />
@@ -44,6 +46,7 @@
     <ClCompile Include="..\..\src\huc6280_psg.cpp" />
     <ClCompile Include="..\..\src\huc6280.cpp" />
     <ClCompile Include="..\..\src\input.cpp" />
+    <ClCompile Include="..\..\src\turbolink.cpp" />
     <ClCompile Include="..\..\src\mapper.cpp" />
     <ClCompile Include="..\..\src\mb128.cpp" />
     <ClCompile Include="..\..\src\memory.cpp" />
@@ -80,16 +83,23 @@
     <ClCompile Include="..\shared\dependencies\miniz\miniz.c">
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
     </ClCompile>
+    <ClCompile Include="..\shared\dependencies\minivorbis\minivorbis.c">
+      <CompileAs>CompileAsC</CompileAs>
+      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+    </ClCompile>
     <ClCompile Include="..\shared\desktop\sound_queue.cpp" />
     <ClCompile Include="..\shared\desktop\application.cpp" />
     <ClCompile Include="..\shared\desktop\application_headless.cpp" />
     <ClCompile Include="..\shared\desktop\config.cpp" />
     <ClCompile Include="..\shared\desktop\emu.cpp" />
     <ClCompile Include="..\shared\desktop\mcp\mcp_debug_adapter.cpp" />
+    <ClCompile Include="..\shared\desktop\mcp\mcp_tool_registry.cpp" />
     <ClCompile Include="..\shared\desktop\mcp\mcp_server.cpp" />
+    <ClCompile Include="..\shared\desktop\turbolink\turbolink_manager.cpp" />
     <ClCompile Include="..\shared\desktop\single_instance.cpp" />
     <ClCompile Include="..\shared\desktop\gui_actions.cpp" />
     <ClCompile Include="..\shared\desktop\rewind.cpp" />
+    <ClCompile Include="..\shared\desktop\runahead.cpp" />
     <ClCompile Include="..\shared\desktop\gui_debug_disassembler.cpp" />
     <ClCompile Include="..\shared\desktop\gui_debug_huc6202.cpp" />
     <ClCompile Include="..\shared\desktop\gui_debug_huc6260.cpp" />
@@ -105,7 +115,9 @@
     <ClCompile Include="..\shared\desktop\gui_debug_cdrom_audio.cpp" />
     <ClCompile Include="..\shared\desktop\gui_debug_adpcm.cpp" />
     <ClCompile Include="..\shared\desktop\gui_debug_trace_logger.cpp" />
+    <ClCompile Include="..\shared\desktop\gui_debug_turbolink.cpp" />
     <ClCompile Include="..\shared\desktop\gui_debug_rewind.cpp" />
+    <ClCompile Include="..\shared\desktop\trace_logger_formatter.cpp" />
     <ClCompile Include="..\shared\desktop\gui_debug.cpp" />
     <ClCompile Include="..\shared\desktop\gui_filedialogs.cpp" />
     <ClCompile Include="..\shared\desktop\gui_hes.cpp" />
@@ -153,10 +165,12 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\src\arcade_card_mapper_inline.h" />
+    <ClInclude Include="..\..\src\cdrom_chd_file_adapter.h" />
     <ClInclude Include="..\..\src\cdrom_chd_image.h" />
     <ClInclude Include="..\..\src\cdrom_cuebin_image.h" />
-    <ClInclude Include="..\..\src\cdrom_file.h" />
-    <ClInclude Include="..\..\src\cdrom_file_native.h" />
+    <ClInclude Include="..\..\src\media_file.h" />
+    <ClInclude Include="..\..\src\media_file_native.h" />
+    <ClInclude Include="..\..\src\ogg_vorbis_decoder.h" />
     <ClInclude Include="..\..\src\cdrom_image.h" />
     <ClInclude Include="..\..\src\crc.h" />
     <ClInclude Include="..\..\src\huc6202_inline.h" />
@@ -179,6 +193,7 @@
     <ClInclude Include="..\..\src\cdrom_audio.h" />
     <ClInclude Include="..\..\src\cdrom_common.h" />
     <ClInclude Include="..\..\src\memory_stream.h" />
+    <ClInclude Include="..\..\src\random.h" />
     <ClInclude Include="..\..\src\scsi_controller.h" />
     <ClInclude Include="..\..\src\scsi_controller_inline.h" />
     <ClInclude Include="..\..\src\common.h" />
@@ -189,6 +204,7 @@
     <ClInclude Include="..\..\src\geargrafx_core_inline.h" />
     <ClInclude Include="..\..\src\input_inline.h" />
     <ClInclude Include="..\..\src\input.h" />
+    <ClInclude Include="..\..\src\turbolink.h" />
     <ClInclude Include="..\..\src\log.h" />
     <ClInclude Include="..\..\src\mapper.h" />
     <ClInclude Include="..\..\src\mb128.h" />
@@ -208,12 +224,14 @@
     <ClInclude Include="..\..\src\huc6280_registers.h" />
     <ClInclude Include="..\..\src\huc6280_timing.h" />
     <ClInclude Include="..\..\src\huc6280.h" />
+    <ClInclude Include="..\..\src\sf2_mapper_inline.h" />
     <ClInclude Include="..\..\src\sf2_mapper.h" />
     <ClInclude Include="..\..\src\vgm_recorder.h" />
     <ClInclude Include="..\..\src\trace_logger.h" />
     <ClInclude Include="..\..\src\types.h" />
     <ClInclude Include="..\shared\dependencies\glad\glad.h" />
     <ClInclude Include="..\shared\dependencies\imgui\fonts\NotoSansJPRegular.h" />
+    <ClInclude Include="..\shared\dependencies\minivorbis\minivorbis.h" />
     <ClInclude Include="..\shared\dependencies\libchdr\include\libchdr\bitstream.h" />
     <ClInclude Include="..\shared\dependencies\libchdr\include\libchdr\cdrom.h" />
     <ClInclude Include="..\shared\dependencies\libchdr\include\libchdr\chd.h" />
@@ -235,8 +253,13 @@
     <ClInclude Include="..\shared\desktop\application_headless.h" />
     <ClInclude Include="..\shared\desktop\backers.h" />
     <ClInclude Include="..\shared\desktop\config.h" />
+    <ClInclude Include="..\shared\desktop\config_data.h" />
+    <ClInclude Include="..\shared\desktop\config_definitions.inc.h" />
+    <ClInclude Include="..\shared\desktop\config_macros.h" />
     <ClInclude Include="..\shared\desktop\console_utils.h" />
     <ClInclude Include="..\shared\desktop\emu.h" />
+    <ClInclude Include="..\shared\desktop\turbolink\turbolink_manager.h" />
+    <ClInclude Include="..\shared\desktop\turbolink\turbolink_signal.h" />
     <ClInclude Include="..\shared\dependencies\json\json.hpp" />
     <ClInclude Include="..\shared\desktop\mcp\mcp_debug_adapter.h" />
     <ClInclude Include="..\shared\desktop\mcp\mcp_manager.h" />
@@ -244,6 +267,7 @@
     <ClInclude Include="..\shared\desktop\mcp\mcp_transport.h" />
     <ClInclude Include="..\shared\desktop\gui_actions.h" />
     <ClInclude Include="..\shared\desktop\rewind.h" />
+    <ClInclude Include="..\shared\desktop\runahead.h" />
     <ClInclude Include="..\shared\desktop\gui_debug_constants.h" />
     <ClInclude Include="..\shared\desktop\gui_debug_disassembler.h" />
     <ClInclude Include="..\shared\desktop\gui_debug_huc6202.h" />
@@ -261,6 +285,8 @@
     <ClInclude Include="..\shared\desktop\gui_debug_adpcm.h" />
     <ClInclude Include="..\shared\desktop\gui_debug_text.h" />
     <ClInclude Include="..\shared\desktop\gui_debug_trace_logger.h" />
+    <ClInclude Include="..\shared\desktop\gui_debug_turbolink.h" />
+    <ClInclude Include="..\shared\desktop\trace_logger_formatter.h" />
     <ClInclude Include="..\shared\desktop\gui_debug_rewind.h" />
     <ClInclude Include="..\shared\desktop\gui_debug_widgets.h" />
     <ClInclude Include="..\shared\desktop\gui_debug.h" />
@@ -268,6 +294,7 @@
     <ClInclude Include="..\shared\desktop\gui_hes.h" />
     <ClInclude Include="..\shared\desktop\gui_menus.h" />
     <ClInclude Include="..\shared\desktop\gui_popups.h" />
+    <ClInclude Include="..\..\src\ips_patch.h" />
     <ClInclude Include="..\shared\desktop\gui.h" />
     <ClInclude Include="..\shared\dependencies\imgui\fonts\IconsMaterialDesign.h" />
     <ClInclude Include="..\shared\dependencies\imgui\fonts\MaterialIcons.h" />
@@ -304,6 +331,9 @@
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="Geargrafx.rc" />
+    <ResourceCompile Include="version.rc">
+      <PreprocessorDefinitions>EMULATOR_BUILD="$(EmulatorBuild)";EMULATOR_VERSION=$(EmulatorVersionResource);%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ResourceCompile>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
@@ -311,28 +341,34 @@
     <ProjectGuid>{2344a943-76d2-473d-a742-4b3583b894ac}</ProjectGuid>
     <RootNamespace>Geargrafx</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+    <EmulatorBuild Condition="'$(EmulatorBuild)' == ''">undefined</EmulatorBuild>
+    <EmulatorVersion>$([System.Text.RegularExpressions.Regex]::Match('$(EmulatorBuild)', '^[0-9]+\.[0-9]+\.[0-9]+').Value)</EmulatorVersion>
+    <EmulatorVersion Condition="'$(EmulatorVersion)' == ''">0.0.0</EmulatorVersion>
+    <EmulatorVersionResource>$([System.String]::Copy('$(EmulatorVersion)').Replace('.', ',')),0</EmulatorVersionResource>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <PlatformToolSet>v143</PlatformToolSet>
+    <PlatformToolSet>v145</PlatformToolSet>
     <OutputDirectory>release\</OutputDirectory>
     <ATLMinimizesCRunTimeLibraryUsage>false</ATLMinimizesCRunTimeLibraryUsage>
     <CharacterSet>NotSet</CharacterSet>
     <ConfigurationType>Application</ConfigurationType>
     <IntermediateDirectory>release\</IntermediateDirectory>
     <PrimaryOutput>Geargrafx</PrimaryOutput>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'" Label="Configuration">
-    <PlatformToolSet>v143</PlatformToolSet>
+    <PlatformToolSet>v145</PlatformToolSet>
     <OutputDirectory>release\</OutputDirectory>
     <ATLMinimizesCRunTimeLibraryUsage>false</ATLMinimizesCRunTimeLibraryUsage>
     <CharacterSet>NotSet</CharacterSet>
     <ConfigurationType>Application</ConfigurationType>
     <IntermediateDirectory>release\</IntermediateDirectory>
     <PrimaryOutput>Geargrafx</PrimaryOutput>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <PlatformToolSet>v143</PlatformToolSet>
+    <PlatformToolSet>v145</PlatformToolSet>
     <OutputDirectory>debug\</OutputDirectory>
     <ATLMinimizesCRunTimeLibraryUsage>false</ATLMinimizesCRunTimeLibraryUsage>
     <CharacterSet>NotSet</CharacterSet>
@@ -341,7 +377,7 @@
     <PrimaryOutput>Geargrafx</PrimaryOutput>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'" Label="Configuration">
-    <PlatformToolSet>v143</PlatformToolSet>
+    <PlatformToolSet>v145</PlatformToolSet>
     <OutputDirectory>debug\</OutputDirectory>
     <ATLMinimizesCRunTimeLibraryUsage>false</ATLMinimizesCRunTimeLibraryUsage>
     <CharacterSet>NotSet</CharacterSet>
@@ -386,7 +422,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>.;../../src;../shared/dependencies/imgui;../shared/dependencies/mINI;../shared/dependencies/stb;../shared/dependencies/libchdr/include;../shared/dependencies/lzma/include;../shared/dependencies/zstd;../shared/dependencies/miniz;../shared/dependencies/glad;../shared/dependencies/json;dependencies/SDL3/include;release;.;.\GeneratedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;../../src;../shared/dependencies/imgui;../shared/dependencies/mINI;../shared/dependencies/stb;../shared/dependencies/libchdr/include;../shared/dependencies/lzma/include;../shared/dependencies/zstd;../shared/dependencies/minivorbis;../shared/dependencies/miniz;../shared/dependencies/glad;../shared/dependencies/json;dependencies/SDL3/include;release;.;.\GeneratedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>-Zc:strictStrings -Zc:throwingNew -w34100 -w34189 -w44996 -w44456 -w44457 -w44458 %(AdditionalOptions)</AdditionalOptions>
       <AssemblerListingLocation>release\</AssemblerListingLocation>
       <BrowseInformation>false</BrowseInformation>
@@ -415,6 +451,7 @@
       <RandomizedBaseAddress>true</RandomizedBaseAddress>
       <SubSystem>Windows</SubSystem>
       <SuppressStartupBanner>true</SuppressStartupBanner>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <Midl>
       <DefaultCharType>Unsigned</DefaultCharType>
@@ -427,7 +464,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|ARM64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>.;../../src;../shared/dependencies/imgui;../shared/dependencies/mINI;../shared/dependencies/stb;../shared/dependencies/libchdr/include;../shared/dependencies/lzma/include;../shared/dependencies/zstd;../shared/dependencies/miniz;../shared/dependencies/glad;../shared/dependencies/json;dependencies/SDL3/include;release;.;.\GeneratedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;../../src;../shared/dependencies/imgui;../shared/dependencies/mINI;../shared/dependencies/stb;../shared/dependencies/libchdr/include;../shared/dependencies/lzma/include;../shared/dependencies/zstd;../shared/dependencies/minivorbis;../shared/dependencies/miniz;../shared/dependencies/glad;../shared/dependencies/json;dependencies/SDL3/include;release;.;.\GeneratedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>-Zc:strictStrings -Zc:throwingNew -w34100 -w34189 -w44996 -w44456 -w44457 -w44458 %(AdditionalOptions)</AdditionalOptions>
       <AssemblerListingLocation>release\</AssemblerListingLocation>
       <BrowseInformation>false</BrowseInformation>
@@ -456,6 +493,7 @@
       <RandomizedBaseAddress>true</RandomizedBaseAddress>
       <SubSystem>Windows</SubSystem>
       <SuppressStartupBanner>true</SuppressStartupBanner>
+      <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
     </Link>
     <Midl>
       <DefaultCharType>Unsigned</DefaultCharType>
@@ -468,7 +506,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>.;../../src;../shared/dependencies/imgui;../shared/dependencies/mINI;../shared/dependencies/stb;../shared/dependencies/libchdr/include;../shared/dependencies/lzma/include;../shared/dependencies/zstd;../shared/dependencies/miniz;../shared/dependencies/glad;../shared/dependencies/json;dependencies/SDL3/include;debug;.\GeneratedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;../../src;../shared/dependencies/imgui;../shared/dependencies/mINI;../shared/dependencies/stb;../shared/dependencies/libchdr/include;../shared/dependencies/lzma/include;../shared/dependencies/zstd;../shared/dependencies/minivorbis;../shared/dependencies/miniz;../shared/dependencies/glad;../shared/dependencies/json;dependencies/SDL3/include;debug;.\GeneratedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>-Zc:strictStrings -Zc:throwingNew -w34100 -w34189 -w44996 -w44456 -w44457 -w44458 %(AdditionalOptions)</AdditionalOptions>
       <AssemblerListingLocation>debug\</AssemblerListingLocation>
       <BrowseInformation>false</BrowseInformation>
@@ -508,7 +546,7 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|ARM64'">
     <ClCompile>
-      <AdditionalIncludeDirectories>.;../../src;../shared/dependencies/imgui;../shared/dependencies/mINI;../shared/dependencies/stb;../shared/dependencies/libchdr/include;../shared/dependencies/lzma/include;../shared/dependencies/zstd;../shared/dependencies/miniz;../shared/dependencies/glad;../shared/dependencies/json;dependencies/SDL3/include;debug;.\GeneratedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>.;../../src;../shared/dependencies/imgui;../shared/dependencies/mINI;../shared/dependencies/stb;../shared/dependencies/libchdr/include;../shared/dependencies/lzma/include;../shared/dependencies/zstd;../shared/dependencies/minivorbis;../shared/dependencies/miniz;../shared/dependencies/glad;../shared/dependencies/json;dependencies/SDL3/include;debug;.\GeneratedFiles;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>-Zc:strictStrings -Zc:throwingNew -w34100 -w34189 -w44996 -w44456 -w44457 -w44458 %(AdditionalOptions)</AdditionalOptions>
       <AssemblerListingLocation>debug\</AssemblerListingLocation>
       <BrowseInformation>false</BrowseInformation>

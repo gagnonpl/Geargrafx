@@ -26,8 +26,7 @@ HuC6280PSG::HuC6280PSG()
 {
     InitPointer(m_channels);
     InitPointer(m_ch);
-    m_huc6280a = true;
-    m_dc_offset = 16;
+    m_dac_offset = k_huc6280_psg_huc6280_dac_offset;
     m_hpf_prev_input[0] = 0.0f;
     m_hpf_prev_input[1] = 0.0f;
     m_hpf_prev_output[0] = 0.0f;
@@ -66,7 +65,6 @@ void HuC6280PSG::Reset()
 {
     m_elapsed_cycles = 0;
     m_buffer_index = 0;
-    m_sample_cycle_counter = 0;
     m_frame_samples = 0;
 
     m_hpf_prev_input[0] = 0.0f;
@@ -105,6 +103,7 @@ void HuC6280PSG::Reset()
         m_channels[i].dda_enabled = 0;
         m_channels[i].left_sample = 0;
         m_channels[i].right_sample = 0;
+        m_wave_sum[i] = 0;
 
         for (int j = 0; j < 32; j++)
         {
@@ -115,6 +114,19 @@ void HuC6280PSG::Reset()
         {
             m_channels[i].output[j] = 0;
         }
+
+        UpdateChannelVolume(i);
+    }
+}
+
+void HuC6280PSG::RebuildWaveSums()
+{
+    for (int channel = 0; channel < 6; channel++)
+    {
+        m_wave_sum[channel] = 0;
+
+        for (int i = 0; i < 32; i++)
+            m_wave_sum[channel] += m_channels[channel].wave_data[i] & 0x1F;
     }
 }
 
@@ -135,6 +147,10 @@ void HuC6280PSG::Write(u16 address, u8 value)
         m_main_vol = value;
         m_main_vol_left = (value >> 4) & 0x0F;
         m_main_vol_right = value & 0x0F;
+
+        for (int i = 0; i < 6; i++)
+            UpdateChannelVolume(i);
+
         break;
     // Channel frequency (low)
     case 2:
@@ -154,22 +170,38 @@ void HuC6280PSG::Write(u16 address, u8 value)
     case 4:
         if (m_channel_select < 6)
         {
+            bool enabled = IS_SET_BIT(value, 7);
+            bool dda_enabled = IS_SET_BIT(value, 6);
+            bool dda_falling = m_ch->dda_enabled && !dda_enabled;
+
             // Channel enable/disable
-            if (IS_SET_BIT(m_ch->control, 7) != IS_SET_BIT(value, 7))
+            if (m_ch->enabled != (u8)enabled)
             {
                 m_ch->counter = m_ch->frequency;
             }
 
-            // DDA on, channel off
-            if (IS_SET_BIT(m_ch->control, 6) && IS_NOT_SET_BIT(value, 7))
+            // DDA holds the waveform address reset
+            if (m_ch->dda_enabled || dda_enabled)
             {
                 m_ch->wave_index = 0;
             }
 
+            if (dda_falling)
+            {
+                m_ch->counter = m_ch->frequency ? m_ch->frequency : 0x1000;
+            }
+
             m_ch->control = value;
-            m_ch->enabled = IS_SET_BIT(value, 7);
-            m_ch->dda_enabled = IS_SET_BIT(value, 6);
+            m_ch->enabled = enabled;
+            m_ch->dda_enabled = dda_enabled;
             m_ch->vol = (value >> 1) & 0x0F;
+
+            UpdateChannelVolume(m_channel_select);
+
+            if (dda_falling)
+            {
+                UpdateWaveformOutput(m_ch->wave_data[0]);
+            }
         }
         break;
     // Channel amplitude
@@ -179,24 +211,35 @@ void HuC6280PSG::Write(u16 address, u8 value)
             m_ch->amplitude = value;
             m_ch->vol_left = (value >> 4) & 0x0F;
             m_ch->vol_right = value & 0x0F;
+
+            UpdateChannelVolume(m_channel_select);
         }
         break;
     // Channel waveform data
     case 6:
         if (m_channel_select < 6)
         {
-            m_ch->wave = value & 0x1F;
+            u8 data = value & 0x1F;
+            m_ch->wave = data;
 
             // DDA on
             if (IS_SET_BIT(m_ch->control, 6))
             {
-                m_ch->dda = value & 0x1F;
+                m_ch->dda = data;
             }
-            // DDA off, Channel off
-            else if(IS_NOT_SET_BIT(m_ch->control, 7))
+            // DDA off
+            else
             {
-                m_ch->wave_data[m_ch->wave_index] = value & 0x1F;
-                m_ch->wave_index = ((m_ch->wave_index + 1) & 0x1F);
+                m_wave_sum[m_channel_select] -= m_ch->wave_data[m_ch->wave_index] & 0x1F;
+                m_ch->wave_data[m_ch->wave_index] = data;
+                m_wave_sum[m_channel_select] += m_ch->wave_data[m_ch->wave_index];
+
+                if (!m_ch->enabled)
+                {
+                    m_ch->wave_index = ((m_ch->wave_index + 1) & 0x1F);
+                }
+
+                UpdateWaveformOutput(data);
             }
         }
         break;
@@ -215,17 +258,18 @@ void HuC6280PSG::Write(u16 address, u8 value)
         break;
     // LFO frequency
     case 8:
-        m_lfo_frequency = value ? value : 0x100;
-
-        if (IS_SET_BIT(value, 7))
-        {
-            u16 lfo_freq = m_lfo_src->frequency ? m_lfo_src->frequency : 0x1000;
-            m_lfo_src->counter = lfo_freq * m_lfo_frequency;
-            m_lfo_src->wave_index = 0;
-        }
+        m_lfo_frequency = value;
         break;
     // LFO control
     case 9:
+        if (IS_SET_BIT(value, 7))
+        {
+            u16 lfo_freq = m_lfo_src->frequency ? m_lfo_src->frequency : 0x1000;
+            m_lfo_src->counter = lfo_freq * GetLfoFrequency();
+            m_lfo_src->wave_index = 0;
+            m_lfo_src->dda = m_lfo_src->wave_data[0];
+        }
+
         m_lfo_control = value;
         m_lfo_enabled = (value & 0x03);
         break;
@@ -239,8 +283,29 @@ void HuC6280PSG::Sync()
 
     while (remaining_cycles > 0)
     {
-        int batch_size = MIN(remaining_cycles, GG_PSG_CYCLES_PER_SAMPLE - m_sample_cycle_counter);
+        int batch_size = remaining_cycles;
         remaining_cycles -= batch_size;
+
+        bool lfo_configured = IsLfoConfigured();
+        bool lfo_running = IsLfoRunning();
+
+        if (lfo_running && !m_lfo_src->dda_enabled)
+        {
+            u16 lfo_freq = m_lfo_src->frequency ? m_lfo_src->frequency : 0x1000;
+            s32 lfo_period = lfo_freq * GetLfoFrequency();
+            int lfo_counter_new = m_lfo_src->counter - batch_size;
+
+            if (lfo_counter_new <= 0)
+            {
+                int lfo_steps = 1 + ((-lfo_counter_new) / lfo_period);
+                m_lfo_src->counter = lfo_counter_new + (lfo_steps * lfo_period);
+                m_lfo_src->wave_index = (m_lfo_src->wave_index + lfo_steps) & 0x1F;
+            }
+            else
+            {
+                m_lfo_src->counter = lfo_counter_new;
+            }
+        }
 
         for (int i = 0; i < 6; i++)
         {
@@ -279,61 +344,33 @@ void HuC6280PSG::Sync()
             if (!ch->enabled)
                 continue;
 
-            u8 temp_left_vol = MIN(0x0F, (0x0F - m_main_vol_left) + (0x0F - ch->vol_left) + (0x0F - ch->vol));
-            u8 temp_right_vol = MIN(0x0F, (0x0F - m_main_vol_right) + (0x0F - ch->vol_right) + (0x0F - ch->vol));
-
-            u16 final_left_vol = m_volume_lut[(temp_left_vol << 1) | (~ch->control & 0x01)];
-            u16 final_right_vol = m_volume_lut[(temp_right_vol << 1) | (~ch->control & 0x01)];
-
             s8 data = 0;
+            bool noise_enabled = ch->noise_enabled && (i >= 4);
 
             // Noise
-            if ((ch->noise_enabled) && (i >= 4))
+            if (noise_enabled)
+            {
+                if (!ch->dda_enabled)
+                    AdvanceWaveform(ch, batch_size);
+
                 data = noise_data;
+            }
             // DDA
             else if (ch->dda_enabled)
                 data = ch->dda;
-            // Waveform with LFO
-            else if (m_lfo_enabled && (i < 2))
+            // LFO destination
+            else if (lfo_configured && (i == 0))
             {
-                if (i == 1)
-                    continue;
-
-                u16 lfo_freq = m_lfo_src->frequency ? m_lfo_src->frequency : 0x1000;
-                s32 freq = m_lfo_dest->frequency ? m_lfo_dest->frequency : 0x1000;
-
-                if (m_lfo_control & 0x80)
-                {
-                    m_lfo_src->counter = lfo_freq * m_lfo_frequency;
-                    m_lfo_src->wave_index = 0;
-                }
-                else
-                {
-                    int lfo_counter_new = m_lfo_src->counter - batch_size;
-                    if (lfo_counter_new <= 0)
-                    {
-                        int lfo_steps = 1 + ((-lfo_counter_new) / (lfo_freq * m_lfo_frequency));
-                        m_lfo_src->counter = lfo_counter_new + (lfo_steps * lfo_freq * m_lfo_frequency);
-
-                        m_lfo_src->wave_index = (m_lfo_src->wave_index + lfo_steps) & 0x1f;
-                    }
-                    else
-                    {
-                        m_lfo_src->counter = lfo_counter_new;
-                    }
-
-                    s16 lfo_data = m_lfo_src->wave_data[m_lfo_src->wave_index];
-                    freq += ((lfo_data - 16) << (((m_lfo_control & 3) - 1) << 1));
-                    freq = MAX(freq, 1);
-                }
+                u16 freq = m_lfo_dest->frequency ? m_lfo_dest->frequency : 0x1000;
+                u8 lfo_data = m_lfo_src->wave_data[m_lfo_src->wave_index];
+                freq = CalculateLfoPeriod(freq, lfo_data);
 
                 int dest_counter_new = m_lfo_dest->counter - batch_size;
                 if (dest_counter_new <= 0)
                 {
                     int dest_steps = 1 + ((-dest_counter_new) / freq);
                     m_lfo_dest->counter = dest_counter_new + (dest_steps * freq);
-
-                    m_lfo_dest->wave_index = (m_lfo_dest->wave_index + dest_steps) & 0x1f;
+                    m_lfo_dest->wave_index = (m_lfo_dest->wave_index + dest_steps) & 0x1F;
                 }
                 else
                 {
@@ -342,55 +379,49 @@ void HuC6280PSG::Sync()
 
                 data = m_lfo_dest->wave_data[m_lfo_dest->wave_index];
             }
+            // LFO source
+            else if (lfo_configured && (i == 1))
+                data = m_lfo_src->wave_data[m_lfo_src->wave_index];
             // Waveform without LFO
             else
             {
-                u16 freq = ch->frequency ? ch->frequency : 0x1000;
+                u16 freq = AdvanceWaveform(ch, batch_size);
 
-                int wave_counter_new = ch->counter - batch_size;
-                if (wave_counter_new <= 0)
+                if (!ch->mute)
                 {
-                    int wave_steps = 1 + ((-wave_counter_new) / freq);
-                    ch->counter = wave_counter_new + (wave_steps * freq);
-
-                    ch->wave_index = (ch->wave_index + wave_steps) & 0x1F;
-                }
-                else
-                {
-                    ch->counter = wave_counter_new;
+                    ch->left_sample = GetWaveformSample(i, freq, ch->gain_left);
+                    ch->right_sample = GetWaveformSample(i, freq, ch->gain_right);
                 }
 
-                if (freq > 7)
-                    data = ch->wave_data[ch->wave_index];
+                continue;
             }
 
             if (!ch->mute)
             {
-                ch->left_sample = (s16)((data - m_dc_offset) * final_left_vol);
-                ch->right_sample = (s16)((data - m_dc_offset) * final_right_vol);
+                ch->left_sample = ScaleSample(data, ch->gain_left);
+                ch->right_sample = ScaleSample(data, ch->gain_right);
             }
         }
 
-        m_sample_cycle_counter += batch_size;
+    }
+}
 
-        if (m_sample_cycle_counter >= GG_PSG_CYCLES_PER_SAMPLE)
-        {
-            m_sample_cycle_counter -= GG_PSG_CYCLES_PER_SAMPLE;
+void HuC6280PSG::Sample()
+{
+    Sync();
 
-            for (int i = 0; i < 6; i++)
-            {
-                m_channels[i].output[m_buffer_index + 0] = m_channels[i].left_sample;
-                m_channels[i].output[m_buffer_index + 1] = m_channels[i].right_sample;
-            }
+    for (int i = 0; i < 6; i++)
+    {
+        m_channels[i].output[m_buffer_index + 0] = m_channels[i].left_sample;
+        m_channels[i].output[m_buffer_index + 1] = m_channels[i].right_sample;
+    }
 
-            m_buffer_index += 2;
+    m_buffer_index += 2;
 
-            if (m_buffer_index >= GG_AUDIO_BUFFER_SIZE)
-            {
-                Error("PSG buffer overflow");
-                m_buffer_index = 0;
-            }
-        }
+    if (m_buffer_index >= GG_AUDIO_BUFFER_SIZE)
+    {
+        Error("PSG buffer overflow");
+        m_buffer_index = 0;
     }
 }
 
@@ -407,29 +438,19 @@ int HuC6280PSG::EndFrame(s16* sample_buffer)
 
         for (int s = 0; s < samples; s++)
         {
-            if (m_huc6280a)
-            {
-                s16 final_sample = 0;
-                for (int i = 0; i < 6; i++)
-                    final_sample += m_channels[i].output[s];
+            int channel = s & 0x01;
+            float raw = 0.0f;
+            for (int i = 0; i < 6; i++)
+                raw += m_channels[i].output[s];
+            raw *= k_huc6280_psg_output_scale;
 
-                sample_buffer[s] = final_sample;
-            }
-            else
-            {
-                int channel = s & 0x01;
-                float raw = 0.0f;
-                for (int i = 0; i < 6; i++)
-                    raw += m_channels[i].output[s];
+            const float hpf_r = 0.9985f;
+            float outSample = raw - m_hpf_prev_input[channel] + hpf_r * m_hpf_prev_output[channel];
 
-                const float hpf_r = 0.9985f;
-                float outSample = raw - m_hpf_prev_input[channel] + hpf_r * m_hpf_prev_output[channel];
+            m_hpf_prev_input[channel] = raw;
+            m_hpf_prev_output[channel] = outSample;
 
-                m_hpf_prev_input[channel] = raw;
-                m_hpf_prev_output[channel] = outSample;
-
-                sample_buffer[s] = (s16)outSample;
-            }
+            sample_buffer[s] = (s16)CLAMP(outSample, -32768.0f, 32767.0f);
         }
     }
 
@@ -443,14 +464,30 @@ void HuC6280PSG::ComputeVolumeLUT()
     double amplitude = 65535.0 / 6.0 / 32.0;
     double step = 48.0 / 32.0;
     
-    for (int i = 0; i < 30; i++)
+    for (int i = 0; i < 31; i++)
     {
         m_volume_lut[i] = (u16)amplitude;
         amplitude /= pow(10.0, step / 20.0);
     }
 
-    m_volume_lut[30] = 0;
     m_volume_lut[31] = 0;
+}
+
+void HuC6280PSG::UpdateChannelVolume(int channel)
+{
+    HuC6280PSG_Channel* ch = &m_channels[channel];
+
+    u8 main_left = k_huc6280_psg_volume_scale[m_main_vol_left & 0x0F];
+    u8 main_right = k_huc6280_psg_volume_scale[m_main_vol_right & 0x0F];
+    u8 channel_left = k_huc6280_psg_volume_scale[ch->vol_left & 0x0F];
+    u8 channel_right = k_huc6280_psg_volume_scale[ch->vol_right & 0x0F];
+    u8 channel_volume = ch->control & 0x1F;
+
+    u8 temp_left_vol = MIN(0x1F, (0x1F - main_left) + (0x1F - channel_left) + (0x1F - channel_volume));
+    u8 temp_right_vol = MIN(0x1F, (0x1F - main_right) + (0x1F - channel_right) + (0x1F - channel_volume));
+
+    ch->gain_left = m_volume_lut[temp_left_vol];
+    ch->gain_right = m_volume_lut[temp_right_vol];
 }
 
 void HuC6280PSG::SaveState(std::ostream& stream)
@@ -463,7 +500,6 @@ void HuC6280PSG::SaveState(std::ostream& stream)
     stream.write(reinterpret_cast<const char*> (&m_lfo_frequency), sizeof(m_lfo_frequency));
     stream.write(reinterpret_cast<const char*> (&m_lfo_control), sizeof(m_lfo_control));
     stream.write(reinterpret_cast<const char*> (&m_elapsed_cycles), sizeof(m_elapsed_cycles));
-    stream.write(reinterpret_cast<const char*> (&m_sample_cycle_counter), sizeof(m_sample_cycle_counter));
     stream.write(reinterpret_cast<const char*> (&m_frame_samples), sizeof(m_frame_samples));
     stream.write(reinterpret_cast<const char*> (&m_buffer_index), sizeof(m_buffer_index));
 
@@ -504,14 +540,24 @@ void HuC6280PSG::LoadState(std::istream& stream, int version)
     stream.read(reinterpret_cast<char*> (&m_main_vol_right), sizeof(m_main_vol_right));
     stream.read(reinterpret_cast<char*> (&m_lfo_enabled), sizeof(m_lfo_enabled));
     stream.read(reinterpret_cast<char*> (&m_lfo_frequency), sizeof(m_lfo_frequency));
+    m_lfo_frequency &= 0xFF;
     stream.read(reinterpret_cast<char*> (&m_lfo_control), sizeof(m_lfo_control));
     stream.read(reinterpret_cast<char*> (&m_elapsed_cycles), sizeof(m_elapsed_cycles));
-    stream.read(reinterpret_cast<char*> (&m_sample_cycle_counter), sizeof(m_sample_cycle_counter));
+
+    if (version < 32)
+    {
+        s32 sample_cycle_counter = 0;
+        stream.read(reinterpret_cast<char*> (&sample_cycle_counter), sizeof(sample_cycle_counter));
+    }
 
     if (version >= 27)
     {
         stream.read(reinterpret_cast<char*> (&m_frame_samples), sizeof(m_frame_samples));
         stream.read(reinterpret_cast<char*> (&m_buffer_index), sizeof(m_buffer_index));
+
+        m_buffer_index = CLAMP(m_buffer_index, 0, GG_AUDIO_BUFFER_SIZE - 2);
+        m_buffer_index &= ~1;
+        m_frame_samples = CLAMP(m_frame_samples, 0, GG_AUDIO_BUFFER_SIZE);
     }
     else
     {
@@ -546,6 +592,20 @@ void HuC6280PSG::LoadState(std::istream& stream, int version)
             stream.read(reinterpret_cast<char*> (m_channels[i].output), sizeof(m_channels[i].output));
         else
             memset(m_channels[i].output, 0, sizeof(m_channels[i].output));
+
+        if (version < 36)
+        {
+            s32 left_sample = (s32)m_channels[i].left_sample * k_huc6280_psg_sample_scale;
+            s32 right_sample = (s32)m_channels[i].right_sample * k_huc6280_psg_sample_scale;
+            m_channels[i].left_sample = (s16)CLAMP(left_sample, -32768, 32767);
+            m_channels[i].right_sample = (s16)CLAMP(right_sample, -32768, 32767);
+
+            for (int j = 0; j < GG_AUDIO_BUFFER_SIZE; j++)
+            {
+                s32 sample = (s32)m_channels[i].output[j] * k_huc6280_psg_sample_scale;
+                m_channels[i].output[j] = (s16)CLAMP(sample, -32768, 32767);
+            }
+        }
     }
 
     if (version >= 28)
@@ -573,9 +633,14 @@ void HuC6280PSG::LoadState(std::istream& stream, int version)
         m_hpf_prev_output[1] = 0.0f;
     }
 
+    RebuildWaveSums();
+
     m_channel_select &= 0x07;
     if (m_channel_select < 6)
         m_ch = &m_channels[m_channel_select];
     else
         m_ch = &m_channels[0];
+
+    for (int i = 0; i < 6; i++)
+        UpdateChannelVolume(i);
 }

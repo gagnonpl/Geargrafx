@@ -24,7 +24,8 @@
 #include "media.h"
 #include "game_db.h"
 #include "crc.h"
-#include "cdrom_file.h"
+#include "ips_patch.h"
+#include "media_file.h"
 #include "cdrom_media.h"
 
 Media::Media(CdRomMedia* cdrom_media)
@@ -48,7 +49,10 @@ Media::Media(CdRomMedia* cdrom_media)
     m_is_gameexpress = false;
     m_is_sgx = false;
     m_is_cdrom = false;
+    m_cdrom_hardware_enabled = false;
     m_is_in_game_database = false;
+    m_game_database_name = NULL;
+    m_adpcm_clock_speed = GG_ADPCM_DEFAULT_CLOCK_SPEED;
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
     m_is_physical_cdrom = false;
     m_physical_cdrom_device_id[0] = 0;
@@ -59,11 +63,14 @@ Media::Media(CdRomMedia* cdrom_media)
     m_is_loaded_bios_syscard = false;
     m_is_loaded_bios_gameexpress = false;
     m_mapper = STANDARD_MAPPER;
-    m_avenue_pad_3_button = GG_KEY_SELECT;
+    m_avenue_pad_3_button = GG_KEY_RUN;
     m_console_type = GG_CONSOLE_AUTO;
     m_cdrom_type = GG_CDROM_AUTO;
     m_force_backup_ram = false;
+    m_force_gameexpress = false;
     m_preload_cdrom = false;
+    m_softpatch_applied = false;
+    m_softpatch_path[0] = 0;
     m_invalidate_cache = false;
 
     m_rom_map = new u8*[128];
@@ -102,14 +109,19 @@ void Media::Reset()
     m_is_gameexpress = false;
     m_is_sgx = false;
     m_is_cdrom = false;
+    m_cdrom_hardware_enabled = false;
     m_is_in_game_database = false;
+    m_game_database_name = NULL;
+    m_adpcm_clock_speed = GG_ADPCM_DEFAULT_CLOCK_SPEED;
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
     m_is_physical_cdrom = false;
     m_physical_cdrom_device_id[0] = 0;
 #endif
     m_is_mb128 = false;
     m_mapper = STANDARD_MAPPER;
-    m_avenue_pad_3_button = GG_KEY_SELECT;
+    m_avenue_pad_3_button = GG_KEY_RUN;
+    m_softpatch_applied = false;
+    m_softpatch_path[0] = 0;
 
     for (int i = 0; i < 128; i++)
     {
@@ -132,7 +144,17 @@ void Media::SetTempPath(const char* path)
     }
 }
 
-bool Media::LoadMedia(const char* path)
+bool Media::IsSoftpatchApplied() const
+{
+    return m_softpatch_applied;
+}
+
+const char* Media::GetSoftpatchPath() const
+{
+    return m_softpatch_path;
+}
+
+bool Media::LoadMedia(const char* path, bool softpatching)
 {
     using namespace std;
 
@@ -146,7 +168,7 @@ bool Media::LoadMedia(const char* path)
 
     if (strcmp(m_file_extension, "zip") == 0)
     {
-        m_ready = LoadMediaFromZipFile(path);
+        m_ready = LoadMediaFromZipFile(path, softpatching);
     }
     else if (strcmp(m_file_extension, "cue") == 0)
     {
@@ -167,37 +189,53 @@ bool Media::LoadMedia(const char* path)
     {
         ifstream file;
         open_ifstream_utf8(file, path, ios::in | ios::binary | ios::ate);
-        int size = (int)(file.tellg());
 
         if (file.is_open())
         {
-            char* buffer = new char[size];
-            file.seekg(0, ios::beg);
-            file.read(buffer, size);
-            file.close();
-
-            bool is_empty = false;
-
-            for (int i = 0; i < size; i++)
+            int size = (int)(file.tellg());
+            if (size > 0)
             {
-                if (buffer[i] != 0)
-                    break;
+                char* buffer = new char[size];
+                file.seekg(0, ios::beg);
 
-                if (i == size - 1)
+                if (file.read(buffer, size))
                 {
-                    Error("File %s is empty!", path);
-                    is_empty = true;
+                    bool is_empty = false;
+
+                    for (int i = 0; i < size; i++)
+                    {
+                        if (buffer[i] != 0)
+                            break;
+
+                        if (i == size - 1)
+                        {
+                            Error("File %s is empty!", path);
+                            is_empty = true;
+                            m_ready = false;
+                        }
+                    }
+
+                    if (!is_empty)
+                    {
+                        m_is_cdrom = false;
+                        m_ready = LoadHuCardFromBufferWithSoftpatch((u8*)(buffer), size, path, softpatching);
+                    }
+                }
+                else
+                {
+                    Error("There was a problem reading the file %s...", path);
                     m_ready = false;
                 }
-            }
 
-            if (!is_empty)
+                SafeDeleteArray(buffer);
+            }
+            else
             {
-                m_is_cdrom = false;
-                m_ready = LoadHuCardFromBuffer((u8*)(buffer), size, path);
+                Error("Invalid file size %d for file %s...", size, path);
+                m_ready = false;
             }
 
-            SafeDeleteArray(buffer);
+            file.close();
         }
         else
         {
@@ -206,10 +244,40 @@ bool Media::LoadMedia(const char* path)
         }
     }
 
-    if (!m_ready)
+    if (!m_ready && m_softpatch_applied)
+    {
+        Error("Media rejected after applying IPS patch %s. Loading unpatched media.", m_softpatch_path);
+        return LoadMedia(path, false);
+    }
+    else if (!m_ready)
         Reset();
 
     return m_ready;
+}
+
+bool Media::LoadHuCardFromBufferWithSoftpatch(const u8* buffer, int size, const char* path,
+    bool softpatching)
+{
+    u8* patched_buffer = NULL;
+    int patched_size = 0;
+    char patch_path[4096] = {};
+    bool patched = softpatching && ips_apply_patch(m_file_path, buffer, size,
+        &patched_buffer, &patched_size, patch_path, sizeof(patch_path));
+
+    bool loaded;
+    if (patched)
+        loaded = LoadHuCardFromBuffer(patched_buffer, patched_size, path);
+    else
+        loaded = LoadHuCardFromBuffer(buffer, size, path);
+
+    m_softpatch_applied = patched;
+    if (m_softpatch_applied)
+        strncpy_fit(m_softpatch_path, patch_path, sizeof(m_softpatch_path));
+    else
+        m_softpatch_path[0] = 0;
+
+    SafeDeleteArray(patched_buffer);
+    return loaded;
 }
 
 bool Media::LoadHuCardFromBuffer(const u8* buffer, int size, const char* path)
@@ -324,72 +392,103 @@ bool Media::LoadPhysicalCdRom(const char* device_id)
 bool Media::LoadBios(const char* file_path, bool syscard)
 {
     using namespace std;
-    int expected_size = 0;
-    u8* bios = NULL;
-    u32* bios_crc = NULL;
-    bool* loaded_bios;
 
-    if (syscard)
-    {
-        expected_size = GG_BIOS_SYSCARD_SIZE;
-        bios = m_syscard_bios;
-        bios_crc = &m_bios_crc_syscard;
-        m_is_valid_bios_syscard = false;
-        loaded_bios = &m_is_loaded_bios_syscard;
-    }
-    else
-    {
-        expected_size = GG_BIOS_GAME_EXPRESS_SIZE;
-        bios = m_gameexpress_bios;
-        bios_crc = &m_bios_crc_gameexpress;
-        m_is_valid_bios_gameexpress = false;
-        loaded_bios = &m_is_loaded_bios_gameexpress;
-    }
+    UnloadBios(syscard);
 
-    bool ret = true;
+    ifstream file;
+    open_ifstream_utf8(file, file_path, ios::in | ios::binary | ios::ate);
 
-    ifstream file(file_path, ios::in | ios::binary | ios::ate);
-
-    if (file.is_open())
-    {
-        int size = static_cast<int> (file.tellg());
-
-        if (size != expected_size)
-        {
-            Log("Incorrect BIOS size %d: expected: %d. %s", size, expected_size, file_path);
-        }
-
-        memset(bios, 0x00, expected_size);
-
-        file.seekg(0, ios::beg);
-
-        if(size & 512)
-        {
-            Log("Removing 512 bytes header from BIOS...");
-            size &= ~512;
-            file.seekg(512, ios::beg);
-        }
-
-        file.read(reinterpret_cast<char*>(bios), MIN(size, expected_size));
-        file.close();
-
-        *bios_crc = CalculateCRC32(0, bios, expected_size);
-        GatherBIOSInfoFromDB(syscard);
-
-        Log("BIOS loaded (%d bytes): %s", size, file_path);
-    }
-    else
+    if (!file.is_open())
     {
         Log("There was a problem opening the file %s", file_path);
-        ret = false;
+        return false;
     }
 
-    *loaded_bios = ret;
+    int size = static_cast<int>(file.tellg());
+    if (size <= 0)
+    {
+        Log("Invalid BIOS size %d: %s", size, file_path);
+        return false;
+    }
 
-    return ret;
+    u8* buffer = new u8[size];
+    file.seekg(0, ios::beg);
+    if (!file.read(reinterpret_cast<char*>(buffer), size))
+    {
+        SafeDeleteArray(buffer);
+        Log("There was a problem reading the BIOS file %s", file_path);
+        return false;
+    }
+    file.close();
+
+    bool loaded = LoadBiosData(buffer, size, syscard, file_path);
+    SafeDeleteArray(buffer);
+    return loaded;
 }
 
-bool Media::LoadMediaFromZipFile(const char* path)
+bool Media::LoadBiosFromBuffer(const u8* buffer, int size, bool syscard)
+{
+    return LoadBiosData(buffer, size, syscard, NULL);
+}
+
+void Media::UnloadBios(bool syscard)
+{
+    if (syscard)
+    {
+        m_is_loaded_bios_syscard = false;
+        m_is_valid_bios_syscard = false;
+    }
+    else
+    {
+        m_is_loaded_bios_gameexpress = false;
+        m_is_valid_bios_gameexpress = false;
+    }
+}
+
+bool Media::LoadBiosData(const u8* buffer, int size, bool syscard, const char* path)
+{
+    int expected_size = syscard ? GG_BIOS_SYSCARD_SIZE : GG_BIOS_GAME_EXPRESS_SIZE;
+    u8* bios = syscard ? m_syscard_bios : m_gameexpress_bios;
+    u32* bios_crc = syscard ? &m_bios_crc_syscard : &m_bios_crc_gameexpress;
+    bool* loaded_bios = syscard ? &m_is_loaded_bios_syscard : &m_is_loaded_bios_gameexpress;
+    UnloadBios(syscard);
+
+    if (!IsValidPointer(buffer) || (size <= 0))
+        return false;
+
+    if (size != expected_size)
+    {
+        if (path)
+            Log("Incorrect BIOS size %d: expected: %d. %s", size, expected_size, path);
+        else
+            Log("Incorrect BIOS size %d: expected: %d", size, expected_size);
+    }
+
+    const u8* source = buffer;
+    int data_size = size;
+    if (data_size & 512)
+    {
+        Log("Removing 512 bytes header from BIOS...");
+        data_size &= ~512;
+        source += 512;
+    }
+
+    memset(bios, 0x00, expected_size);
+    memcpy(bios, source, MIN(data_size, expected_size));
+
+    *bios_crc = CalculateCRC32(0, bios, expected_size);
+    GatherBIOSInfoFromDB(syscard);
+    *loaded_bios = true;
+
+    if (path)
+        Log("BIOS loaded (%d bytes): %s", data_size, path);
+    else
+        Log("BIOS loaded (%d bytes)", data_size);
+
+    return true;
+}
+
+bool Media::LoadMediaFromZipFile(const char* path, bool softpatching)
 {
     Debug("Loading Media from ZIP file: %s", path);
 
@@ -436,7 +535,7 @@ bool Media::LoadMediaFromZipFile(const char* path)
                 return false;
             }
 
-            bool ok = LoadHuCardFromBuffer((const u8*) p, (int)uncomp_size, fn.c_str());
+            bool ok = LoadHuCardFromBufferWithSoftpatch((const u8*) p, (int)uncomp_size, fn.c_str(), softpatching);
 
             free(p);
             mz_zip_reader_end(&zip_archive);
@@ -478,6 +577,8 @@ bool Media::LoadMediaFromZipFile(const char* path)
         }
     }
 
+    mz_zip_reader_end(&zip_archive);
+
     Error("No valid ROM or CUE file found in ZIP archive %s", path);
 
     return false;
@@ -485,6 +586,8 @@ bool Media::LoadMediaFromZipFile(const char* path)
 
 void Media::GatherMediaInfo()
 {
+    m_cdrom_hardware_enabled = m_is_cdrom || (m_cdrom_type != GG_CDROM_AUTO);
+
     if (m_is_cdrom)
     {
         m_crc = m_cdrom_media->GetCRC();
@@ -498,6 +601,12 @@ void Media::GatherMediaInfo()
     }
 
     GatherMediaInfoFromDB();
+
+    if (m_force_gameexpress && m_is_cdrom)
+    {
+        m_is_gameexpress = true;
+        Log("Forcing Game Express because of user request");
+    }
 
     if (m_console_type == GG_CONSOLE_SGX)
     {
@@ -575,8 +684,11 @@ void Media::GatherMediaInfo()
 void Media::GatherMediaInfoFromDB()
 {
     m_card_ram_size = 0;
+    m_is_gameexpress = false;
     m_is_sgx = false;
     m_is_in_game_database = false;
+    m_game_database_name = NULL;
+    m_adpcm_clock_speed = GG_ADPCM_DEFAULT_CLOCK_SPEED;
 
     int i = 0;
 
@@ -587,7 +699,14 @@ void Media::GatherMediaInfoFromDB()
         if (db_crc == m_crc)
         {
             m_is_in_game_database = true;
+            m_game_database_name = k_game_database[i].title;
             Log("Media found in database: %s. CRC: %08X", k_game_database[i].title, m_crc);
+
+            if (k_game_database[i].adpcm_clock_speed > 0.0f)
+            {
+                m_adpcm_clock_speed = k_game_database[i].adpcm_clock_speed;
+                Log("Media has a custom ADPCM clock speed: %.1f Hz", m_adpcm_clock_speed);
+            }
 
             if (k_game_database[i].flags & GG_GAMEDB_CARD_RAM_8000)
             {
@@ -725,7 +844,7 @@ void Media::GatherDataFromPath(const char* path)
 
 void Media::InitRomMAP()
 {
-    int rom_size = m_is_cdrom ? GG_BIOS_SYSCARD_SIZE : m_rom_size;
+    int rom_size = m_is_cdrom ? (m_is_gameexpress ? GG_BIOS_GAME_EXPRESS_SIZE : GG_BIOS_SYSCARD_SIZE) : m_rom_size;
     int rom_bank_count = (rom_size / 0x2000) + (rom_size % 0x2000 ? 1 : 0);
     u8* bios_ptr = m_is_gameexpress ? m_gameexpress_bios : m_syscard_bios;
     u8* rom_ptr = m_is_cdrom ? bios_ptr : m_rom;
@@ -812,7 +931,7 @@ bool Media::IsValidFile(const char* path)
         return false;
     }
 
-    CdRomFile* file = CdRomFile::OpenFile(path);
+    MediaFile* file = MediaFile::OpenFile(path);
 
     if (file)
     {

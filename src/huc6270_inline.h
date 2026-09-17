@@ -26,6 +26,12 @@
 #include "huc6280.h"
 #include "trace_logger.h"
 
+INLINE void HuC6270::TraceVdcEvent(u8 event, u8 raw, bool msb)
+{
+    if (IsValidPointer(m_trace_logger) && m_trace_logger->IsEventEnabled(TRACE_VDC, event))
+        LogVdcEvent(event, raw, msb);
+}
+
 INLINE u16 HuC6270::Clock()
 {
     if (m_sat_transfer_pending > 0)
@@ -202,10 +208,9 @@ INLINE void HuC6270::WaitForVramAccess()
 
 INLINE void HuC6270::ProcessVramRead()
 {
-    GG_CHECK_MEMORY_BREAKPOINT(m_huc6280,
-        HuC6280::HuC6280_BREAKPOINT_TYPE_VRAM,
-        m_register[HUC6270_REG_MARR],
-        true);
+#if !defined(GG_DISABLE_DISASSEMBLER)
+    m_huc6280->CheckMemoryBreakpoints(HuC6280::HuC6280_BREAKPOINT_TYPE_VRAM, m_register[HUC6270_REG_MARR], true);
+#endif
     m_read_buffer = ReadVRAM(m_register[HUC6270_REG_MARR]);
     m_register[HUC6270_REG_MARR] += k_huc6270_read_write_increment[(m_register[HUC6270_REG_CR] >> 11) & 0x03];
     m_pending_memory_read = false;
@@ -220,10 +225,9 @@ INLINE void HuC6270::ProcessVramWrite()
     }
     else
     {
-        GG_CHECK_MEMORY_BREAKPOINT(m_huc6280,
-            HuC6280::HuC6280_BREAKPOINT_TYPE_VRAM,
-            m_register[HUC6270_REG_MAWR],
-            false);
+#if !defined(GG_DISABLE_DISASSEMBLER)
+        m_huc6280->CheckMemoryBreakpoints(HuC6280::HuC6280_BREAKPOINT_TYPE_VRAM, m_register[HUC6270_REG_MAWR], false);
+#endif
         m_vram[m_register[HUC6270_REG_MAWR] & 0x7FFF] = m_register[HUC6270_REG_VWR];
     }
 
@@ -350,17 +354,7 @@ INLINE void HuC6270::RCRIRQ()
             m_status_register |= HUC6270_STATUS_SCANLINE;
             m_huc6202->AssertIRQ1(this, true);
 
-#if !defined(GG_DISABLE_DISASSEMBLER)
-            if (m_trace_logger->IsEnabled(TRACE_VDC))
-            {
-                GG_Trace_Entry e = {};
-                e.type = TRACE_VDC;
-                e.vdc.event = TRACE_VDC_SCANLINE_IRQ;
-                e.vdc.value = m_register[HUC6270_REG_RCR];
-                e.vdc.chip = m_chip_id;
-                m_trace_logger->TraceLog(e);
-            }
-#endif
+            TraceVdcEvent(TRACE_VDC_SCANLINE_IRQ);
         }
     }
 }
@@ -372,16 +366,7 @@ INLINE void HuC6270::OverflowIRQ()
         m_status_register |= HUC6270_STATUS_OVERFLOW;
         m_huc6202->AssertIRQ1(this, true);
 
-#if !defined(GG_DISABLE_DISASSEMBLER)
-        if (m_trace_logger->IsEnabled(TRACE_VDC))
-        {
-            GG_Trace_Entry e = {};
-            e.type = TRACE_VDC;
-            e.vdc.event = TRACE_VDC_OVERFLOW_IRQ;
-            e.vdc.chip = m_chip_id;
-            m_trace_logger->TraceLog(e);
-        }
-#endif
+        TraceVdcEvent(TRACE_VDC_OVERFLOW_IRQ);
     }
 }
 
@@ -393,16 +378,7 @@ INLINE void HuC6270::SpriteCollisionIRQ()
         m_status_register |= HUC6270_STATUS_COLLISION;
         m_huc6202->AssertIRQ1(this, true);
 
-#if !defined(GG_DISABLE_DISASSEMBLER)
-        if (m_trace_logger->IsEnabled(TRACE_VDC))
-        {
-            GG_Trace_Entry e = {};
-            e.type = TRACE_VDC;
-            e.vdc.event = TRACE_VDC_SPRITE_COLLISION_IRQ;
-            e.vdc.chip = m_chip_id;
-            m_trace_logger->TraceLog(e);
-        }
-#endif
+        TraceVdcEvent(TRACE_VDC_SPRITE_COLLISION_IRQ);
     }
 }
 

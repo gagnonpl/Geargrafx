@@ -51,8 +51,8 @@ static void add_build_info(const char* fmt, ...);
 static void check_hotkey_duplicates_popup(config_Hotkey* current_hotkey);
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
 static bool open_selected_physical_cdrom_drive(void);
-#endif
 static void refresh_physical_cdrom_drives(void);
+#endif
 
 void gui_popup_open_physical_cdrom(void)
 {
@@ -183,9 +183,9 @@ static bool open_selected_physical_cdrom_drive(void)
 }
 #endif
 
+#if defined(GG_ENABLE_PHYSICAL_CDROM)
 static void refresh_physical_cdrom_drives(void)
 {
-    #if defined(GG_ENABLE_PHYSICAL_CDROM)
     Debug("Enumerating physical CD-ROM drives");
     bool listed = CdRomDrive::ListDrives(physical_cdrom_drives);
     physical_cdrom_selected = -1;
@@ -202,13 +202,14 @@ static void refresh_physical_cdrom_drives(void)
     {
         Debug("Physical CD-ROM drive %d: id=%s name=%s has_disc=%s", i, physical_cdrom_drives[i].id, physical_cdrom_drives[i].name, physical_cdrom_drives[i].has_disc ? "true" : "false");
     }
-    #endif
 }
+#endif
 
 void gui_popup_modal_keyboard()
 {
     if (ImGui::BeginPopupModal("Keyboard Configuration", NULL, ImGuiWindowFlags_AlwaysAutoResize))
     {
+        gui_dialog_in_use = true;
         ImGui::Text("Press any key to assign...\n\n");
         ImGui::Separator();
 
@@ -216,11 +217,13 @@ void gui_popup_modal_keyboard()
         if (scancode != SDL_SCANCODE_UNKNOWN)
         {
             *gui_configured_key = scancode;
+            gui_dialog_in_use = false;
             ImGui::CloseCurrentPopup();
         }
 
         if (ImGui::Button("Cancel", ImVec2(120, 0)))
         {
+            gui_dialog_in_use = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -231,36 +234,49 @@ void gui_popup_modal_gamepad(int pad)
 {
     if (ImGui::BeginPopupModal("Gamepad Configuration", NULL, ImGuiWindowFlags_AlwaysAutoResize))
     {
-        ImGui::Text("Press any button in your gamepad...\n\n");
+        gui_dialog_in_use = true;
+        SDL_Gamepad* controller = gamepad_controller[pad];
+
+        if (IsValidPointer(controller))
+            ImGui::Text("Press any button in your gamepad...\n\n");
+        else
+            ImGui::Text("No gamepad detected.\n\n");
+
         ImGui::Separator();
 
-        for (int i = 0; i < SDL_GAMEPAD_BUTTON_COUNT; i++)
+        if (IsValidPointer(controller))
         {
-            if (SDL_GetGamepadButton(gamepad_controller[pad], (SDL_GamepadButton)i))
+            for (int i = 0; i < SDL_GAMEPAD_BUTTON_COUNT; i++)
             {
-                *gui_configured_button = i;
-                ImGui::CloseCurrentPopup();
-                break;
+                if (SDL_GetGamepadButton(controller, (SDL_GamepadButton)i))
+                {
+                    *gui_configured_button = i;
+                    gui_dialog_in_use = false;
+                    ImGui::CloseCurrentPopup();
+                    break;
+                }
             }
-        }
 
-        for (int a = SDL_GAMEPAD_AXIS_LEFTX; a < SDL_GAMEPAD_AXIS_COUNT; a++)
-        {
-            if (a != SDL_GAMEPAD_AXIS_LEFT_TRIGGER && a != SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)
-                continue;
-
-            Sint16 value = SDL_GetGamepadAxis(gamepad_controller[pad], (SDL_GamepadAxis)a);
-
-            if (value > GAMEPAD_VBTN_AXIS_THRESHOLD)
+            for (int a = SDL_GAMEPAD_AXIS_LEFTX; a < SDL_GAMEPAD_AXIS_COUNT; a++)
             {
-                *gui_configured_button = GAMEPAD_VBTN_AXIS_BASE + a;
-                ImGui::CloseCurrentPopup();
-                break;
+                if (a != SDL_GAMEPAD_AXIS_LEFT_TRIGGER && a != SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)
+                    continue;
+
+                Sint16 value = SDL_GetGamepadAxis(controller, (SDL_GamepadAxis)a);
+
+                if (value > GAMEPAD_VBTN_AXIS_THRESHOLD)
+                {
+                    *gui_configured_button = GAMEPAD_VBTN_AXIS_BASE + a;
+                    gui_dialog_in_use = false;
+                    ImGui::CloseCurrentPopup();
+                    break;
+                }
             }
         }
 
         if (ImGui::Button("Cancel", ImVec2(120, 0)))
         {
+            gui_dialog_in_use = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -271,6 +287,7 @@ void gui_popup_modal_hotkey()
 {
     if (ImGui::BeginPopupModal("Hotkey Configuration", NULL, ImGuiWindowFlags_AlwaysAutoResize))
     {
+        gui_dialog_in_use = true;
         ImGui::Text("Press any key combination...\n");
         ImGui::Text("Hold Ctrl, Shift, or Alt before pressing the key\n\n");
         ImGui::Separator();
@@ -283,11 +300,13 @@ void gui_popup_modal_hotkey()
             gui_configured_hotkey->mod = mods;
             config_update_hotkey_string(gui_configured_hotkey);
             check_hotkey_duplicates_popup(gui_configured_hotkey);
+            gui_dialog_in_use = false;
             ImGui::CloseCurrentPopup();
         }
 
         if (ImGui::Button("Cancel", ImVec2(120, 0)))
         {
+            gui_dialog_in_use = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -303,7 +322,7 @@ void gui_popup_modal_about(void)
 
         ImGui::TextColored(violet, "  By Ignacio Sánchez (DrHelius)");
         ImGui::Text(" "); ImGui::SameLine();
-        ImGui::TextLinkOpenURL("https://github.com/drhelius/Geargrafx");
+        ImGui::TextLinkOpenURL("https://github.com/drhelius/" GG_TITLE);
         ImGui::Text(" "); ImGui::SameLine();
         ImGui::TextLinkOpenURL("https://x.com/drhelius");
         ImGui::NewLine();
@@ -469,6 +488,7 @@ void gui_popup_modal_load_defaults(void)
         if (ImGui::Button("Yes", ImVec2(120, 0)))
         {
             config_load_defaults();
+            gui_set_style();
             ImGui::CloseCurrentPopup();
             gui_dialog_in_use = false;
         }
@@ -495,10 +515,8 @@ void gui_show_info(void)
     emu_get_info(info, 512);
 
     ImGui::PushFont(gui_default_font);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f,0.502f,0.957f,1.0f));
     ImGui::SetCursorPosX(5.0f);
     ImGui::Text("%s", info);
-    ImGui::PopStyleColor();
     ImGui::PopFont();
 
     ImGui::End();

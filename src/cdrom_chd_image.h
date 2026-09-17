@@ -23,6 +23,8 @@
 #include <libchdr/chd.h>
 #include "cdrom_image.h"
 
+class CdRomChdFileAdapter;
+
 class CdRomChdImage : public CdRomImage
 {
 public:
@@ -39,13 +41,14 @@ public:
 private:
     bool ReadTOC();
     void CalculateCRC();
-    void InitHunkCache();
+    bool InitHunkCache();
     void DestroyHunkCache();
     bool LoadHunk(u32 hunk_index);
     GG_CdRomTrackType GetTrackType(const char* type_str);
 
 private:
     chd_file* m_chd_file;
+    CdRomChdFileAdapter* m_file_adapter;
     u8** m_hunk_cache;
     u32 m_hunk_bytes;
     u32 m_hunk_count;

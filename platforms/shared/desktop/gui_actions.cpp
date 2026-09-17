@@ -29,10 +29,12 @@
 #include "geargrafx.h"
 #include "application.h"
 #include "display.h"
+#include "utils.h"
 
 void gui_action_reset(void)
 {
     gui_set_status_message("Resetting...", 3000);
+
     gui_debug_trace_logger_clear();
 
     emu_resume();
@@ -62,7 +64,7 @@ void gui_action_reload_rom(void)
 #endif
 
         char rom_path[4096];
-        strcpy(rom_path, emu_get_core()->GetMedia()->GetFilePath());
+        strncpy_fit(rom_path, emu_get_core()->GetMedia()->GetFilePath(), sizeof(rom_path));
         gui_load_rom(rom_path);
     }
 }
@@ -108,24 +110,30 @@ void gui_action_pause(void)
 
 void gui_action_ffwd(void)
 {
+    if (emu_turbolink_is_active())
+    {
+        config_emulator.ffwd = false;
+        return;
+    }
+
     config_audio.sync = !config_emulator.ffwd;
 
     if (config_emulator.ffwd)
     {
         gui_set_status_message("Fast Forward ON", 3000);
-        display_set_vsync(false);
+        display_disable_vsync();
     }
     else
     {
         gui_set_status_message("Fast Forward OFF", 3000);
-        display_set_vsync(config_video.sync);
+        display_use_vsync_if_enabled();
         emu_audio_reset();
     }
 }
 
 void gui_action_rewind_pressed(void)
 {
-    if (emu_is_empty() || !config_rewind.enabled)
+    if (emu_is_empty() || !config_rewind.enabled || emu_turbolink_is_active())
         return;
     if (rewind_get_snapshot_count() < 1)
         return;
@@ -135,7 +143,7 @@ void gui_action_rewind_pressed(void)
 
     emu_reset_rewind_timing();
     rewind_set_active(true);
-    display_set_vsync(config_video.sync);
+    display_use_vsync_if_enabled();
     gui_set_status_message("Rewinding...", 500);
 }
 
@@ -147,7 +155,10 @@ void gui_action_rewind_released(void)
     rewind_set_active(false);
     events_sync_input();
     emu_reset_rewind_timing();
-    display_set_vsync(config_emulator.ffwd ? false : config_video.sync);
+    if (config_emulator.ffwd)
+        display_disable_vsync();
+    else
+        display_use_vsync_if_enabled();
     emu_audio_reset();
 }
 
@@ -159,11 +170,11 @@ void gui_action_save_screenshot(const char* path)
         return;
 
     time_t now = time(0);
-    tm* ltm = localtime(&now);
+    tm ltm;
 
     char date_time_buffer[32] = {};
-    if (ltm != NULL)
-        strftime(date_time_buffer, sizeof(date_time_buffer), "%Y-%m-%d %H%M%S", ltm);
+    if (get_local_time(now, &ltm))
+        strftime(date_time_buffer, sizeof(date_time_buffer), "%Y-%m-%d %H%M%S", &ltm);
     string date_time = date_time_buffer;
 
     string file_path;

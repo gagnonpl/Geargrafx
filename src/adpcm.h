@@ -55,6 +55,7 @@ public:
     void Reset();
     void SoftReset();
     void Clock(u32 cycles);
+    void Sample();
     u8 Read(u16 address);
     u8 GetStatusRegisterSnapshot();
     void Write(u16 address, u8 value);
@@ -64,6 +65,8 @@ public:
     void SaveState(std::ostream& stream);
     void LoadState(std::istream& stream, int version = GG_SAVESTATE_VERSION);
     void SetTraceLogger(TraceLogger* trace_logger);
+    void SetClockSpeed(float clock_speed);
+    float GetClockSpeed() const;
 
 private:
     void ComputeDeltaLUT();
@@ -73,11 +76,12 @@ private:
     u32 NextSlotCycles(bool read);
     void UpdateReadWriteEvents(u32 cycles);
     void UpdateDMA(u32 cycles);
-    void UpdateAudio(u32 cycles);
     void RunAdpcm(u32 cycles);
     void WriteControl(u8 value);
     void SetEndIRQ(bool asserted);
     void SetHalfIRQ(bool asserted);
+    void TraceAdpcmEvent(u8 event, u16 reg = 0, u8 value = 0, u16 address = 0);
+    void LogAdpcmEvent(u8 event, u16 reg, u8 value, u16 address);
     bool CheckReset();
     void CheckLength();
 
@@ -99,6 +103,7 @@ private:
     u16 m_write_address;
     u16 m_address;
     u32 m_samples_left;
+    float m_clock_speed;
     u8 m_sample_rate;
     s32 m_cycles_per_sample;
     u8 m_control;
@@ -113,7 +118,6 @@ private:
     s16 m_sample;
     u8 m_step_index;
     s32 m_adpcm_cycle_counter;
-    s32 m_audio_cycle_counter;
     s32 m_buffer_index;
     s32 m_frame_samples;
     s16 m_buffer[GG_AUDIO_BUFFER_SIZE] = {};

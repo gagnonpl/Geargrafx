@@ -59,6 +59,46 @@ void HuC6270::SetTraceLogger(TraceLogger* trace_logger)
     m_trace_logger = trace_logger;
 }
 
+void HuC6270::LogVdcEvent(u8 event, u8 raw, bool msb)
+{
+#if !defined(GG_DISABLE_DISASSEMBLER)
+    GG_Trace_Entry e = {};
+    e.type = TRACE_VDC;
+    e.vdc.event = event;
+    e.vdc.chip = m_chip_id;
+
+    switch (event)
+    {
+        case TRACE_VDC_REG_WRITE:
+            e.vdc.reg = (u8)(m_address_register);
+            e.vdc.value = m_register[m_address_register];
+            e.vdc.raw = raw;
+            e.vdc.msb = msb ? 1 : 0;
+            break;
+        case TRACE_VDC_SCANLINE_IRQ:
+            e.vdc.value = m_register[HUC6270_REG_RCR];
+            break;
+        case TRACE_VDC_VRAM_DMA_START:
+            e.vdc.value = m_vram_transfer_src;
+            e.vdc.value2 = m_vram_transfer_dest;
+            e.vdc.value3 = m_register[HUC6270_REG_DCR];
+            e.vdc.param = (u32)m_register[HUC6270_REG_LENR] + 1;
+            break;
+        case TRACE_VDC_SATB_DMA_START:
+            e.vdc.value = m_register[HUC6270_REG_DVSSR];
+            break;
+        default:
+            break;
+    }
+
+    m_trace_logger->TraceLog(e);
+#else
+    UNUSED(event);
+    UNUSED(raw);
+    UNUSED(msb);
+#endif
+}
+
 void HuC6270::Reset()
 {
     memset(m_register, 0, sizeof(m_register));
@@ -69,17 +109,16 @@ void HuC6270::Reset()
         m_register[HUC6270_REG_VSR] = 0x0F02;
         m_register[HUC6270_REG_VDR] = 0x00EF;
         m_register[HUC6270_REG_VCR] = 0x0004;
-        m_read_buffer = 0x0000;
     }
     else
     {
         m_register[HUC6270_REG_HDR] = 0x1F;
         m_register[HUC6270_REG_VDR] = 239;
-        m_read_buffer = 0xFFFF;
     }
 
     m_address_register = 0;
     m_status_register = 0;
+    m_read_buffer = 0xFFFF;
     m_vram_openbus = 0;
     m_pending_memory_read = false;
     m_pending_memory_write = false;
@@ -196,10 +235,9 @@ u8 HuC6270::ReadRegister(u16 address)
             if (m_pending_memory_read)
                 WaitForVramAccess();
 
-            GG_CHECK_MEMORY_BREAKPOINT(m_huc6280,
-                HuC6280::HuC6280_BREAKPOINT_TYPE_HUC6270_REGISTER,
-                m_address_register,
-                true);
+#if !defined(GG_DISABLE_DISASSEMBLER)
+            m_huc6280->CheckMemoryBreakpoints(HuC6280::HuC6280_BREAKPOINT_TYPE_HUC6270_REGISTER, m_address_register, true);
+#endif
             u8 ret = m_read_buffer >> 8;
 
             if (m_address_register == HUC6270_REG_VRR)
@@ -228,10 +266,9 @@ void HuC6270::WriteRegister(u16 address, u8 value)
         // Data register (MSB)
         case 3:
         {
-            GG_CHECK_MEMORY_BREAKPOINT(m_huc6280,
-                HuC6280::HuC6280_BREAKPOINT_TYPE_HUC6270_REGISTER,
-                m_address_register,
-                false);
+#if !defined(GG_DISABLE_DISASSEMBLER)
+            m_huc6280->CheckMemoryBreakpoints(HuC6280::HuC6280_BREAKPOINT_TYPE_HUC6270_REGISTER, m_address_register, false);
+#endif
 
             bool msb = address & 0x01;
 
@@ -250,6 +287,8 @@ void HuC6270::WriteRegister(u16 address, u8 value)
                 m_register[m_address_register] = (m_register[m_address_register] & 0xFF00) | value;
 
             m_register[m_address_register] &= k_register_mask[m_address_register];
+
+            TraceVdcEvent(TRACE_VDC_REG_WRITE, value, msb);
 
             switch (m_address_register)
             {
@@ -312,6 +351,8 @@ void HuC6270::WriteRegister(u16 address, u8 value)
                         m_vram_transfer_pending = 4 * (m_register[HUC6270_REG_LENR] + 1);
                         m_vram_transfer_src = m_register[HUC6270_REG_SOUR];
                         m_vram_transfer_dest = m_register[HUC6270_REG_DESR];
+
+                        TraceVdcEvent(TRACE_VDC_VRAM_DMA_START);
                     }
                     break;
                 // 0x13
@@ -497,16 +538,7 @@ void HuC6270::SATTransfer()
                 m_status_register |= HUC6270_STATUS_SAT_END;
                 m_huc6202->AssertIRQ1(this, true);
 
-#if !defined(GG_DISABLE_DISASSEMBLER)
-                if (m_trace_logger->IsEnabled(TRACE_VDC))
-                {
-                    GG_Trace_Entry e = {};
-                    e.type = TRACE_VDC;
-                    e.vdc.event = TRACE_VDC_SATB_DMA_END_IRQ;
-                    e.vdc.chip = m_chip_id;
-                    m_trace_logger->TraceLog(e);
-                }
-#endif
+                TraceVdcEvent(TRACE_VDC_SATB_DMA_END_IRQ);
             }
         }
     }
@@ -542,16 +574,7 @@ void HuC6270::VRAMTransfer()
                 m_status_register |= HUC6270_STATUS_VRAM_END;
                 m_huc6202->AssertIRQ1(this, true);
 
-#if !defined(GG_DISABLE_DISASSEMBLER)
-                if (m_trace_logger->IsEnabled(TRACE_VDC))
-                {
-                    GG_Trace_Entry e = {};
-                    e.type = TRACE_VDC;
-                    e.vdc.event = TRACE_VDC_VRAM_DMA_END_IRQ;
-                    e.vdc.chip = m_chip_id;
-                    m_trace_logger->TraceLog(e);
-                }
-#endif
+                TraceVdcEvent(TRACE_VDC_VRAM_DMA_END_IRQ);
             }
         }
     }
@@ -642,16 +665,7 @@ void HuC6270::VBlankIRQ()
         if(IsValidPointer(m_input_pump_fn))
             m_input_pump_fn();
 
-#if !defined(GG_DISABLE_DISASSEMBLER)
-        if (m_trace_logger->IsEnabled(TRACE_VDC))
-        {
-            GG_Trace_Entry e = {};
-            e.type = TRACE_VDC;
-            e.vdc.event = TRACE_VDC_VBLANK_IRQ;
-            e.vdc.chip = m_chip_id;
-            m_trace_logger->TraceLog(e);
-        }
-#endif
+        TraceVdcEvent(TRACE_VDC_VBLANK_IRQ);
     }
 
     if (m_trigger_sat_transfer || (m_register[HUC6270_REG_DCR] & 0x10))
@@ -659,17 +673,7 @@ void HuC6270::VBlankIRQ()
         m_trigger_sat_transfer = false;
         m_sat_transfer_pending = 1024;
 
-#if !defined(GG_DISABLE_DISASSEMBLER)
-        if (m_trace_logger->IsEnabled(TRACE_VDC))
-        {
-            GG_Trace_Entry e = {};
-            e.type = TRACE_VDC;
-            e.vdc.event = TRACE_VDC_SATB_DMA_START;
-            e.vdc.value = m_register[HUC6270_REG_DVSSR];
-            e.vdc.chip = m_chip_id;
-            m_trace_logger->TraceLog(e);
-        }
-#endif
+        TraceVdcEvent(TRACE_VDC_SATB_DMA_START);
     }
 }
 
@@ -695,54 +699,87 @@ void HuC6270::RenderBackground(int width)
 {
     int screen_reg = (m_latched_mwr >> 4) & 0x07;
     int screen_size_x = k_huc6270_screen_size_x[screen_reg];
+    int screen_size_x_mask = k_huc6270_screen_size_x_pixels_mask[screen_reg];
     int bg_y = m_bg_offset_y;
     bg_y &= k_huc6270_screen_size_y_pixels_mask[screen_reg];
     int tile_y = (bg_y & 7);
     int bat_offset = (bg_y >> 3) * screen_size_x;
+    int bg_x = m_latched_bxr & screen_size_x_mask;
+    int i = 0;
 
-    u8 byte1 = 0, byte2 = 0, byte3 = 0, byte4 = 0;
-    int prev_tile_col = -1;
-    u16 bat_entry = 0;
-    int tile_index = 0;
-    int color_table = 0;
-    int tile_data = 0;
-
-    for (int i = 0; i < width; i++)
+    while (i < width)
     {
-        int bg_x = m_latched_bxr + i;
-        bg_x &= k_huc6270_screen_size_x_pixels_mask[screen_reg];
         int tile_col = bg_x >> 3;
+        int bat_address = bat_offset + tile_col;
+        assert(bat_address < HUC6270_VRAM_SIZE);
 
-        if (tile_col != prev_tile_col)
+        u16 bat_entry = m_vram[bat_address];
+        int tile_data = (bat_entry & 0x07FF) << 4;
+        int line_start_a = tile_data + tile_y;
+        int line_start_b = line_start_a + 8;
+        assert(line_start_b < HUC6270_VRAM_SIZE);
+
+        u16 word_a = m_vram[line_start_a];
+        u16 word_b = m_vram[line_start_b];
+        m_vram_openbus = word_b;
+        u8 byte1 = word_a & 0xFF;
+        u8 byte2 = word_a >> 8;
+        u8 byte3 = word_b & 0xFF;
+        u8 byte4 = word_b >> 8;
+
+        u16 color_table = (bat_entry >> 12) << 4;
+        int count = MIN(8 - (bg_x & 7), width - i);
+        int tile_x = 7 - (bg_x & 7);
+        int end = i + count;
+
+        for (; i < end; i++)
         {
-            bat_entry = ReadVRAM(bat_offset + tile_col);
-            tile_index = bat_entry & 0x07FF;
-            color_table = (bat_entry >> 12) & 0x0F;
-            tile_data = tile_index << 4;
-            int line_start_a = (tile_data + tile_y);
-            int line_start_b = (line_start_a + 8);
-            byte1 = ReadVRAM(line_start_a) & 0xFF;
-            byte2 = ReadVRAM(line_start_a) >> 8;
-            byte3 = ReadVRAM(line_start_b) & 0xFF;
-            byte4 = ReadVRAM(line_start_b) >> 8;
-            prev_tile_col = tile_col;
+            u16 color = ((byte1 >> tile_x) & 0x01) |
+                    (((byte2 >> tile_x) & 0x01) << 1) |
+                    (((byte3 >> tile_x) & 0x01) << 2) |
+                    (((byte4 >> tile_x) & 0x01) << 3);
+            m_line_buffer[i] = color_table | color;
+            tile_x--;
         }
 
-        int tile_x = 7 - (bg_x & 7);
-        m_line_buffer[i] = color_table << 4;
-        m_line_buffer[i] |= ((byte1 >> tile_x) & 0x01) | (((byte2 >> tile_x) & 0x01) << 1) | (((byte3 >> tile_x) & 0x01) << 2) | (((byte4 >> tile_x) & 0x01) << 3);
+        bg_x = (bg_x + count) & screen_size_x_mask;
     }
 }
 
 void HuC6270::RenderSprites(int width)
 {
-    for (int i = 0; i < width; i++)
+    static const u16 sprite_rendered_flag = 0x0200;
+    static const u16 sprite_limit_flag = 0x0400;
+
+    if (m_sprite_count == 0)
+        return;
+
+    int min_x = width;
+    int max_x = -1;
+
+    for (int i = 0; i < m_sprite_count; i++)
+    {
+        int left = m_sprites[i].x - 0x20;
+        int right = left + 15;
+
+        if (right < 0 || left >= width)
+            continue;
+
+        min_x = MIN(min_x, MAX(left, 0));
+        max_x = MAX(max_x, MIN(right, width - 1));
+    }
+
+    if (max_x < min_x)
+        return;
+
+    for (int i = min_x; i <= max_x; i++)
     {
         m_line_buffer_sprites[i] = 0;
     }
 
     for(int i = (m_sprite_count - 1) ; i >= 0; i--)
     {
+        bool in_sprite_limit = (i < 16);
         int pos = m_sprites[i].x - 0x20;
 
         if ((pos + 15) < 0 || pos >= width)
@@ -772,23 +809,27 @@ void HuC6270::RenderSprites(int width)
             {
                 int x_in_screen = pos + x;
 
-                if ((m_sprites[i].index == 0) && (m_line_buffer_sprites[x_in_screen] & 0x0F))
+                if ((m_sprites[i].index == 0) && (m_line_buffer_sprites[x_in_screen] & 0x0F) &&
+                    (!m_no_sprite_limit || (m_line_buffer_sprites[x_in_screen] & sprite_limit_flag)))
                     SpriteCollisionIRQ();
 
                 if (!priority && (m_line_buffer[x_in_screen] & 0x0F))
                     pixel |= 0x100;
                 else
-                    pixel |= m_sprites[i].palette | 0x100 | 0x200;
+                    pixel |= m_sprites[i].palette | 0x100 | sprite_rendered_flag;
+
+                if (m_no_sprite_limit && in_sprite_limit)
+                    pixel |= sprite_limit_flag;
 
                 m_line_buffer_sprites[x_in_screen] = pixel;
             }
         }
     }
 
-    for (int i = 0; i < width; i++)
+    for (int i = min_x; i <= max_x; i++)
     {
-        if(m_line_buffer_sprites[i] & 0x200)
-            m_line_buffer[i] = m_line_buffer_sprites[i] & ~0x200;
+        if(m_line_buffer_sprites[i] & sprite_rendered_flag)
+            m_line_buffer[i] = m_line_buffer_sprites[i] & ~(sprite_rendered_flag | sprite_limit_flag);
     }
 }
 
@@ -986,6 +1027,7 @@ void HuC6270::LoadState(std::istream& stream, int version)
     UpdateCpuVramBusyStatus();
     stream.read(reinterpret_cast<char*> (&m_trigger_sat_transfer), sizeof(m_trigger_sat_transfer));
     stream.read(reinterpret_cast<char*> (&m_sat_transfer_pending), sizeof(m_sat_transfer_pending));
+    m_sat_transfer_pending = MIN(m_sat_transfer_pending, 1024);
     stream.read(reinterpret_cast<char*> (&m_vram_transfer_pending), sizeof(m_vram_transfer_pending));
     stream.read(reinterpret_cast<char*> (&m_vram_transfer_src), sizeof(m_vram_transfer_src));
     stream.read(reinterpret_cast<char*> (&m_vram_transfer_dest), sizeof(m_vram_transfer_dest));

@@ -26,8 +26,11 @@
 #include "sound_queue.h"
 #include "config.h"
 #include "rewind.h"
+#include "runahead.h"
 #include "events.h"
+#include "gui_debug_trace_logger.h"
 #include "mcp/mcp_manager.h"
+#include "turbolink/turbolink_manager.h"
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
 #include "cdrom_drive.h"
 #endif
@@ -42,6 +45,11 @@ static GeargrafxCore* geargrafx;
 static s16* audio_buffer;
 static bool audio_enabled;
 static McpManager* mcp_manager;
+static TurboLinkManager* turbolink_manager;
+static bool turbolink_hardware_applied;
+static bool turbolink_hardware_suspended;
+static bool turbolink_peripherals_locked;
+static u64 turbolink_last_safe_tick;
 static Uint64 rewind_last_counter = 0;
 static double rewind_pop_accumulator = 0.0;
 
@@ -63,6 +71,7 @@ static std::thread loading_thread;
 static bool loading_thread_active;
 static bool loading_result;
 static char loading_file_path[4096];
+static bool loading_softpatching;
 static Loading_Request_Type loading_request_type;
 static bool emu_debug_frame_counter_reset_on_continue = false;
 
@@ -80,6 +89,13 @@ static void update_debug_sprites(void);
 static void update_debug_tiles(void);
 static void reset_rewind_timing(void);
 static int get_rewind_pop_budget(void);
+static void turbolink_publish_callback(u64 tick, u8 drive_mask, u8 value_mask, void* user_data);
+static u8 turbolink_sample_callback(u64 tick, void* user_data);
+static void turbolink_sync_callback(u64 tick, bool exact, void* user_data);
+static void suspend_turbolink_hardware_for_media_load(void);
+static void resume_turbolink_hardware_after_media_load(void);
+static void apply_turbolink_peripherals(void);
+static void restore_turbolink_peripherals(void);
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
 static bool unload_physical_cdrom(char* device_id, size_t device_id_size);
 static void stop_physical_cdrom_after_error(void);
@@ -97,6 +113,15 @@ bool emu_init(GG_Input_Pump_Fn input_pump_fn)
     geargrafx->Init(input_pump_fn);
     geargrafx->GetMedia()->SetTempPath(config_temp_path);
 
+    turbolink_manager = new TurboLinkManager();
+    turbolink_manager->SetNormalBarrierStallUs((u32)config_emulator.turbolink_stall_us);
+    turbolink_hardware_applied = false;
+    turbolink_hardware_suspended = false;
+    turbolink_peripherals_locked = false;
+    turbolink_last_safe_tick = 0;
+    geargrafx->SetTurboLinkCallbacks(turbolink_publish_callback,
+        turbolink_sample_callback, turbolink_sync_callback, turbolink_manager);
+
     sound_queue_init();
 
     for (int i = 0; i < 5; i++)
@@ -109,11 +134,13 @@ bool emu_init(GG_Input_Pump_Fn input_pump_fn)
     emu_debug_command = Debug_Command_None;
     emu_debug_pc_changed = false;
     emu_debug_step_frames_pending = 0;
+    emu_frame_counter = 0;
 
     mcp_manager = new McpManager();
     mcp_manager->Init(geargrafx);
 
     rewind_init();
+    runahead_init();
 
     return true;
 }
@@ -130,7 +157,11 @@ void emu_destroy(void)
     save_ram();
     save_mb128();
     rewind_destroy();
+    runahead_destroy();
     SafeDelete(mcp_manager);
+    emu_turbolink_stop();
+    geargrafx->SetTurboLinkCallbacks(NULL, NULL, NULL, NULL);
+    SafeDelete(turbolink_manager);
     SafeDeleteArray(audio_buffer);
     sound_queue_destroy();
     SafeDelete(geargrafx);
@@ -152,7 +183,7 @@ static void load_media_thread_func(void)
     }
     else
 #endif
-        loading_result = geargrafx->LoadMedia(loading_file_path);
+        loading_result = geargrafx->LoadMedia(loading_file_path, loading_softpatching);
 
     loading_state.store(Loading_State_Finished);
 }
@@ -162,6 +193,7 @@ void emu_load_media_async(const char* file_path)
     if (loading_state.load() != Loading_State_None)
         return;
 
+    gui_debug_trace_logger_reset();
     emu_debug_command = Debug_Command_None;
     reset_buffers();
 
@@ -172,6 +204,8 @@ void emu_load_media_async(const char* file_path)
     loading_file_path[sizeof(loading_file_path) - 1] = '\0';
     loading_request_type = Loading_Request_File;
     loading_result = false;
+    loading_softpatching = config_emulator.softpatching;
+    suspend_turbolink_hardware_for_media_load();
     loading_state.store(Loading_State_Loading);
     if (loading_thread_active)
         loading_thread.join();
@@ -188,6 +222,7 @@ void emu_load_physical_cdrom_async(const char* device_id)
         return;
     }
 
+    gui_debug_trace_logger_reset();
     Log("Queueing physical CD-ROM async load: %s", device_id);
     emu_debug_command = Debug_Command_None;
     reset_buffers();
@@ -199,6 +234,7 @@ void emu_load_physical_cdrom_async(const char* device_id)
     loading_file_path[sizeof(loading_file_path) - 1] = '\0';
     loading_request_type = Loading_Request_PhysicalCdRom;
     loading_result = false;
+    suspend_turbolink_hardware_for_media_load();
     loading_state.store(Loading_State_Loading);
     if (loading_thread_active)
         loading_thread.join();
@@ -227,6 +263,7 @@ bool emu_finish_media_loading(void)
     }
 
     loading_state.store(Loading_State_None);
+    resume_turbolink_hardware_after_media_load();
 
     if (!loading_result)
     {
@@ -258,10 +295,12 @@ void emu_reset_rewind_timing(void)
 
 void emu_update(void)
 {
-    emu_mcp_pump_commands();
+    emu_turbolink_pump();
 
     if (loading_state.load() != Loading_State_None)
         return;
+
+    emu_mcp_pump_commands();
 
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
     if (geargrafx->GetMedia()->HasPhysicalCdRomError())
@@ -284,8 +323,9 @@ void emu_update(void)
 
     int sampleCount = 0;
     bool frame_executed = false;
+    bool frame_completed = false;
 
-    if (rewind_is_active())
+    if (!emu_turbolink_is_active() && rewind_is_active())
     {
         int to_pop = get_rewind_pop_budget();
 
@@ -311,12 +351,19 @@ void emu_update(void)
         debug_run.stop_on_breakpoint = !emu_debug_disable_breakpoints;
         debug_run.stop_on_run_to_breakpoint = true;
         debug_run.stop_on_irq = emu_debug_irq_breakpoints;
+        debug_run.stop_on_brk = config_debug.pause_on_brk && !emu_debug_disable_breakpoints;
+        debug_run.brk_value = (u8)(config_debug.pause_on_brk_value & 0xFF);
+        debug_run.brk_trigger_irq = config_debug.pause_on_brk_trigger_irq;
 
         if (emu_debug_command != Debug_Command_None)
         {
+            Debug_Command debug_command = emu_debug_command;
             rewind_commit_seek();
             breakpoint_hit = geargrafx->RunToVBlank(emu_frame_buffer, audio_buffer, &sampleCount, &debug_run);
             frame_executed = true;
+
+            if (!breakpoint_hit && (debug_command == Debug_Command_StepFrame || debug_command == Debug_Command_Continue))
+                frame_completed = true;
         }
 
         if (breakpoint_hit || emu_debug_command == Debug_Command_StepFrame || emu_debug_command == Debug_Command_Step)
@@ -348,8 +395,15 @@ void emu_update(void)
         if (!geargrafx->IsPaused())
         {
             rewind_commit_seek();
-            geargrafx->RunToVBlank(emu_frame_buffer, audio_buffer, &sampleCount);
+
+            int runahead = emu_turbolink_is_active() ? 0 : runahead_get_frames();
+            if (runahead > 0)
+                runahead_run(runahead, emu_frame_buffer, audio_buffer, &sampleCount);
+            else
+                geargrafx->RunToVBlank(emu_frame_buffer, audio_buffer, &sampleCount);
+
             frame_executed = true;
+            frame_completed = true;
         }
     }
 
@@ -362,11 +416,18 @@ void emu_update(void)
 #endif
 
     if (frame_executed)
-        rewind_push();
+    {
+        if (frame_completed)
+            emu_frame_counter++;
+        if (!emu_turbolink_is_active())
+            rewind_push();
+    }
 
     if ((sampleCount > 0) && !geargrafx->IsPaused())
     {
-        sound_queue_write(audio_buffer, sampleCount, emu_audio_sync);
+        bool cable_connected = emu_turbolink_is_cable_connected();
+        bool sync_audio = emu_audio_sync && (!cable_connected || turbolink_manager->IsPacingPeer());
+        sound_queue_write(audio_buffer, sampleCount, sync_audio);
     }
     else if (geargrafx->IsPaused())
     {
@@ -425,6 +486,8 @@ static bool unload_physical_cdrom(char* device_id, size_t device_id_size)
 
     if (IsValidPointer(device_id) && (device_id_size > 0))
         strncpy_fit(device_id, geargrafx->GetMedia()->GetPhysicalCdRomDeviceId(), device_id_size);
+
+    gui_debug_trace_logger_reset();
 
     emu_debug_command = Debug_Command_None;
     reset_buffers();
@@ -494,8 +557,13 @@ bool emu_is_empty(void)
 
 void emu_reset(void)
 {
+    gui_debug_trace_logger_reset();
     emu_debug_command = Debug_Command_None;
+    emu_debug_step_frames_pending = 0;
+    emu_debug_pc_changed = true;
+    emu_frame_counter = 0;
     reset_buffers();
+    reset_rewind_timing();
     emu_audio_reset();
     save_ram();
     save_mb128();
@@ -540,9 +608,14 @@ bool emu_eject_physical_cdrom(void)
     #endif
 }
 
-void emu_audio_huc6280a(bool enabled)
+void emu_audio_adpcm_clock_speed(int mode, float clock_speed)
 {
-    geargrafx->GetAudio()->GetPSG()->EnableHuC6280A(enabled);
+    geargrafx->SetADPCMClockSpeed(mode == 0 ? 0.0f : clock_speed);
+}
+
+void emu_audio_psg_revision(int revision)
+{
+    geargrafx->SetPSGRevision((GG_PSG_Revision)revision);
 }
 
 void emu_audio_mute(bool mute)
@@ -598,6 +671,7 @@ void emu_load_ram(const char* file_path)
     if (!emu_is_empty())
     {
         save_ram();
+        gui_debug_trace_logger_reset();
         geargrafx->ResetMedia(false);
         geargrafx->LoadRam(file_path, true);
         rewind_reset();
@@ -616,7 +690,7 @@ void emu_save_state_slot(int index)
 
 void emu_load_state_slot(int index)
 {
-    if (!emu_is_empty())
+    if (!emu_is_empty() && !emu_turbolink_is_active())
     {
         const char* dir = get_configurated_dir(config_emulator.savestates_dir_option, config_emulator.savestates_path.c_str());
         if (geargrafx->LoadState(dir, index))
@@ -635,7 +709,7 @@ void emu_save_state_file(const char* file_path)
 
 void emu_load_state_file(const char* file_path)
 {
-    if (!emu_is_empty())
+    if (!emu_is_empty() && !emu_turbolink_is_active())
     {
         if (geargrafx->LoadState(file_path))
         {
@@ -679,6 +753,16 @@ void update_savestates_data(void)
 void emu_get_runtime(GG_Runtime_Info& runtime)
 {
     geargrafx->GetRuntimeInfo(runtime);
+}
+
+double emu_get_frame_rate(void)
+{
+    if (!IsValidPointer(geargrafx))
+        return 60.0;
+
+    GG_Runtime_Info runtime;
+    emu_get_runtime(runtime);
+    return runtime.fps;
 }
 
 void emu_get_info(char* info, int buffer_size)
@@ -755,8 +839,16 @@ void emu_debug_step_out(void)
 
 void emu_debug_step_frame(void)
 {
+    emu_debug_step_frames(1);
+}
+
+void emu_debug_step_frames(int frames)
+{
+    if (frames < 1)
+        frames = 1;
+
     geargrafx->Pause(false);
-    emu_debug_step_frames_pending++;
+    emu_debug_step_frames_pending += frames;
     emu_debug_command = Debug_Command_StepFrame;
 }
 
@@ -801,8 +893,11 @@ void emu_debug_set_frame_counter_reset_on_continue(bool enabled)
 void emu_debug_break(void)
 {
     geargrafx->Pause(false);
-    if (emu_debug_command == Debug_Command_Continue)
+    if (emu_debug_command == Debug_Command_Continue || emu_debug_command == Debug_Command_StepFrame)
+    {
+        emu_debug_step_frames_pending = 0;
         emu_debug_command = Debug_Command_Step;
+    }
 }
 
 void emu_debug_continue(void)
@@ -812,6 +907,16 @@ void emu_debug_continue(void)
 
     geargrafx->Pause(false);
     emu_debug_command = Debug_Command_Continue;
+}
+
+void emu_set_disassembler_syntax(int syntax)
+{
+#if !defined(GG_DISABLE_DISASSEMBLER)
+    if (IsValidPointer(geargrafx))
+        geargrafx->GetHuC6280()->SetDisassemblerSyntax((GG_Disassembler_Syntax)syntax);
+#else
+    UNUSED(syntax);
+#endif
 }
 
 void emu_set_palette(int palette)
@@ -898,11 +1003,17 @@ void emu_set_backup_ram(bool enabled)
 
 void emu_set_turbo_tap(bool enabled)
 {
+    if (emu_turbolink_is_active() && enabled)
+        return;
+
     geargrafx->GetInput()->EnableTurboTap(enabled);
 }
 
 void emu_set_mb128_mode(GG_MB128_Mode mode)
 {
+    if (emu_turbolink_is_active() && mode != GG_MB128_DISABLED)
+        return;
+
     bool was_connected = geargrafx->GetInput()->GetMB128()->IsConnected();
 
     geargrafx->EnableMB128(mode);
@@ -917,6 +1028,9 @@ void emu_set_mb128_mode(GG_MB128_Mode mode)
 
 void emu_set_pad_type(GG_Controllers controller, GG_Controller_Type type)
 {
+    if (emu_turbolink_is_active() && type != GG_CONTROLLER_STANDARD)
+        return;
+
     geargrafx->GetInput()->SetControllerType(controller, type);
 }
 
@@ -1392,8 +1506,18 @@ void emu_start_vgm_recording(const char* file_path)
 
     // PC Engine audio chip always runs at 3.579545 MHz
     int clock_rate = 3579545;
+    Media* media = geargrafx->GetMedia();
+    VgmMetadata metadata;
+    metadata.system_name = "NEC PC Engine / TurboGrafx-16";
+    if (media->IsSGX())
+        metadata.system_name = "NEC PC Engine SuperGrafx";
+    else if (media->IsCDROMHardwareEnabled())
+        metadata.system_name = "NEC PC Engine CD-ROM";
 
-    if (geargrafx->GetAudio()->StartVgmRecording(file_path, clock_rate))
+    metadata.game_name = media->IsInGameDatabase() ? media->GetGameDatabaseName() : media->GetFileName();
+    metadata.comment = "Created with " GG_TITLE " " GG_VERSION;
+
+    if (geargrafx->GetAudio()->StartVgmRecording(file_path, clock_rate, metadata))
     {
         Log("VGM recording started: %s", file_path);
     }
@@ -1413,10 +1537,10 @@ bool emu_is_vgm_recording(void)
     return geargrafx->GetAudio()->IsVgmRecording();
 }
 
-void emu_mcp_set_transport(int mode, int tcp_port)
+void emu_mcp_set_transport(int mode, int tcp_port, const char* tcp_address)
 {
     if (mcp_manager)
-        mcp_manager->SetTransportMode((McpTransportMode)mode, tcp_port);
+    mcp_manager->SetTransportMode((McpTransportMode)mode, tcp_port, tcp_address);
 }
 
 void emu_mcp_start(void)
@@ -1441,9 +1565,248 @@ int emu_mcp_get_transport_mode(void)
     return mcp_manager ? mcp_manager->GetTransportMode() : -1;
 }
 
+const char* emu_mcp_get_http_address(void)
+{
+    return mcp_manager ? mcp_manager->GetTcpAddress() : "";
+}
+
+int emu_mcp_get_http_port(void)
+{
+    return mcp_manager ? mcp_manager->GetTcpPort() : 0;
+}
+
 void emu_mcp_pump_commands(void)
 {
     if (mcp_manager && mcp_manager->IsRunning())
         mcp_manager->PumpCommands(geargrafx);
 }
 
+bool emu_turbolink_connect(int session)
+{
+    if (!turbolink_manager || !geargrafx || session < 1 || session > 255)
+        return false;
+
+    config_emulator.ffwd = false;
+    config_audio.sync = true;
+    emu_audio_sync = true;
+    config_input.turbo_tap = false;
+    config_input.controller_type[0] = GG_CONTROLLER_STANDARD;
+    rewind_reset();
+    reset_rewind_timing();
+
+    bool hardware_safe = !turbolink_hardware_suspended && loading_state.load() == Loading_State_None;
+
+    if (hardware_safe)
+    {
+        turbolink_last_safe_tick = turbolink_make_tick(geargrafx->GetTurboLinkCycle(), GG_TURBOLINK_TICK_BEFORE_PORT_ACCESS);
+    }
+
+    bool started = turbolink_manager->Connect((u8)session, turbolink_last_safe_tick);
+
+    if (started)
+    {
+        turbolink_peripherals_locked = true;
+        if (hardware_safe)
+            apply_turbolink_peripherals();
+    }
+
+    emu_turbolink_pump();
+    return started;
+}
+
+void emu_turbolink_stop(void)
+{
+    if (turbolink_manager)
+        turbolink_manager->Stop();
+
+    if (geargrafx && turbolink_hardware_applied && !turbolink_hardware_suspended)
+    {
+        geargrafx->SetTurboLinkCableConnected(false);
+        turbolink_hardware_applied = false;
+    }
+
+    if (!turbolink_hardware_suspended)
+        restore_turbolink_peripherals();
+}
+
+void emu_turbolink_pump(void)
+{
+    if (!turbolink_manager || !geargrafx)
+        return;
+
+    bool hardware_safe = !turbolink_hardware_suspended && loading_state.load() == Loading_State_None;
+
+    if (hardware_safe)
+    {
+        turbolink_last_safe_tick = turbolink_make_tick(geargrafx->GetTurboLinkCycle(), GG_TURBOLINK_TICK_BEFORE_PORT_ACCESS);
+    }
+
+    turbolink_manager->Pump(turbolink_last_safe_tick);
+
+    if (!hardware_safe)
+        return;
+
+    bool emulation_running = !emu_is_empty() && !geargrafx->IsPaused() &&
+        (!config_debug.debug || emu_debug_command != Debug_Command_None);
+    bool hardware_ready = turbolink_manager->IsActive() && emulation_running;
+
+    if (hardware_ready && !turbolink_manager->IsHardwareReady())
+    {
+        apply_turbolink_peripherals();
+        GG_TurboLink_Drive drive = geargrafx->GetTurboLinkDrive();
+        turbolink_manager->SetHardwareReady(true, turbolink_last_safe_tick, drive.drive_mask, drive.value_mask);
+    }
+    else if (!hardware_ready && turbolink_manager->IsHardwareReady())
+    {
+        turbolink_manager->SetHardwareReady(false, turbolink_last_safe_tick);
+    }
+
+    bool local_attachment_changed = turbolink_manager->ConsumeLocalAttachmentChanged();
+    bool remote_identity_changed = turbolink_manager->ConsumeRemoteIdentityChanged();
+
+    if (local_attachment_changed && turbolink_hardware_applied)
+    {
+        geargrafx->SetTurboLinkCableConnected(false);
+        turbolink_hardware_applied = false;
+    }
+
+    bool apply_hardware = turbolink_manager->IsHardwareReady();
+
+    if (apply_hardware != turbolink_hardware_applied)
+    {
+        geargrafx->SetTurboLinkCableConnected(apply_hardware);
+        turbolink_hardware_applied = apply_hardware;
+    }
+    else if (remote_identity_changed && turbolink_hardware_applied)
+    {
+        geargrafx->InvalidateTurboLinkSample();
+    }
+
+    if (!turbolink_manager->IsActive())
+    {
+        if (turbolink_hardware_applied)
+        {
+            geargrafx->SetTurboLinkCableConnected(false);
+            turbolink_hardware_applied = false;
+        }
+        restore_turbolink_peripherals();
+    }
+}
+
+bool emu_turbolink_is_active(void)
+{
+    return turbolink_manager && turbolink_manager->IsActive();
+}
+
+bool emu_turbolink_is_core_suspended(void)
+{
+    return turbolink_hardware_suspended;
+}
+
+bool emu_turbolink_is_cable_connected(void)
+{
+    return turbolink_manager && turbolink_manager->IsCableConnected();
+}
+
+bool emu_turbolink_has_remote_peer(void)
+{
+    return turbolink_manager && turbolink_manager->HasRemotePeer();
+}
+
+bool emu_turbolink_is_pacing_peer(void)
+{
+    return turbolink_manager && turbolink_manager->IsPacingPeer();
+}
+
+TurboLinkStatus emu_turbolink_get_status(void)
+{
+    if (turbolink_manager)
+        return turbolink_manager->GetStatus();
+
+    TurboLinkStatus status = {};
+    status.mode = TurboLinkModeDisabled;
+    status.last_sampled_lines = GG_TURBOLINK_LINE_MASK;
+    return status;
+}
+
+void emu_turbolink_reset_metrics(void)
+{
+    if (turbolink_manager)
+        turbolink_manager->ResetMetrics();
+}
+
+void emu_turbolink_set_normal_barrier_stall_us(u32 stall_us)
+{
+    if (turbolink_manager)
+        turbolink_manager->SetNormalBarrierStallUs(stall_us);
+}
+
+static void turbolink_publish_callback(u64 tick, u8 drive_mask, u8 value_mask, void* user_data)
+{
+    TurboLinkManager* manager = (TurboLinkManager*)user_data;
+    if (manager)
+        manager->PublishDrive(tick, drive_mask, value_mask);
+}
+
+static u8 turbolink_sample_callback(u64 tick, void* user_data)
+{
+    TurboLinkManager* manager = (TurboLinkManager*)user_data;
+    return manager ? manager->SampleLines(tick) : GG_TURBOLINK_LINE_MASK;
+}
+
+static void turbolink_sync_callback(u64 tick, bool exact, void* user_data)
+{
+    TurboLinkManager* manager = (TurboLinkManager*)user_data;
+    if (manager)
+        manager->Synchronize(tick, exact);
+}
+
+static void suspend_turbolink_hardware_for_media_load(void)
+{
+    if (turbolink_hardware_suspended || !turbolink_manager || !geargrafx || !turbolink_manager->IsActive())
+    {
+        return;
+    }
+
+    turbolink_last_safe_tick = turbolink_make_tick(geargrafx->GetTurboLinkCycle(), GG_TURBOLINK_TICK_BEFORE_PORT_ACCESS);
+    turbolink_manager->SetHardwareReady(false, turbolink_last_safe_tick);
+
+    if (turbolink_hardware_applied)
+    {
+        geargrafx->SetTurboLinkCableConnected(false);
+        turbolink_hardware_applied = false;
+    }
+
+    turbolink_hardware_suspended = true;
+}
+
+static void resume_turbolink_hardware_after_media_load(void)
+{
+    if (!turbolink_hardware_suspended || !turbolink_manager || !geargrafx)
+        return;
+
+    turbolink_hardware_suspended = false;
+
+    if (!turbolink_manager->IsActive())
+        restore_turbolink_peripherals();
+}
+
+static void apply_turbolink_peripherals(void)
+{
+    if (!geargrafx)
+        return;
+
+    emu_set_turbo_tap(false);
+    emu_set_pad_type(GG_CONTROLLER_1, GG_CONTROLLER_STANDARD);
+    emu_set_mb128_mode(GG_MB128_DISABLED);
+    turbolink_peripherals_locked = true;
+}
+
+static void restore_turbolink_peripherals(void)
+{
+    if (!geargrafx || !turbolink_peripherals_locked)
+        return;
+
+    turbolink_peripherals_locked = false;
+    emu_set_mb128_mode((GG_MB128_Mode)config_emulator.mb128_mode);
+}

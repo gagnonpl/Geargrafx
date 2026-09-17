@@ -161,6 +161,20 @@ INLINE void HuC6280::OPCodes_BIT(u16 address)
 INLINE void HuC6280::OPCodes_BRK()
 {
     u16 pc = m_PC.GetValue();
+
+    if (m_debug_brk_enabled && m_memory->Read(pc) == m_debug_brk_value)
+    {
+        m_debug_brk_breakpoint_hit = true;
+        SetBreakpointHitAddress(pc - 1);
+
+        if (!m_debug_brk_trigger_irq)
+        {
+            Fetch8();
+            m_cycles = 2;
+            return;
+        }
+    }
+
     StackPush16(pc + 1);
     StackPush8(m_P.GetValue() | FLAG_BREAK);
     SetFlag(FLAG_INTERRUPT);
@@ -510,12 +524,12 @@ INLINE void HuC6280::OPCodes_TAI()
 
     if (m_transfer_state == 2)
     {
+        m_cycles += 6;
         m_memory->Write(m_transfer_dest, m_memory->Read(m_transfer_source, true), true);
         m_transfer_source += (m_transfer_count & 1) ? -1 : 1;
         m_transfer_dest++;
         m_transfer_count++;
         m_transfer_length--;
-        m_cycles += 6;
 
         if (m_transfer_length == 0)
             m_transfer_state = 1;
@@ -541,11 +555,11 @@ INLINE void HuC6280::OPCodes_TDD()
 
     if (m_transfer_state == 2)
     {
+        m_cycles += 6;
         m_memory->Write(m_transfer_dest, m_memory->Read(m_transfer_source, true), true);
         m_transfer_source--;
         m_transfer_dest--;
         m_transfer_length--;
-        m_cycles += 6;
 
         if (m_transfer_length == 0)
             m_transfer_state = 1;
@@ -571,12 +585,12 @@ INLINE void HuC6280::OPCodes_TIA()
 
     if (m_transfer_state == 2)
     {
+        m_cycles += 6;
         m_memory->Write(m_transfer_dest, m_memory->Read(m_transfer_source, true), true);
         m_transfer_source++;
         m_transfer_dest += (m_transfer_count & 1) ? -1 : 1;
         m_transfer_count++;
         m_transfer_length--;
-        m_cycles += 6;
 
         if (m_transfer_length == 0)
             m_transfer_state = 1;
@@ -602,11 +616,11 @@ INLINE void HuC6280::OPCodes_TII()
 
     if (m_transfer_state == 2)
     {
+        m_cycles += 6;
         m_memory->Write(m_transfer_dest, m_memory->Read(m_transfer_source, true), true);
         m_transfer_source++;
         m_transfer_dest++;
         m_transfer_length--;
-        m_cycles += 6;
 
         if (m_transfer_length == 0)
             m_transfer_state = 1;
@@ -632,10 +646,10 @@ INLINE void HuC6280::OPCodes_TIN()
 
     if (m_transfer_state == 2)
     {
+        m_cycles += 6;
         m_memory->Write(m_transfer_dest, m_memory->Read(m_transfer_source, true), true);
         m_transfer_source++;
         m_transfer_length--;
-        m_cycles += 6;
 
         if (m_transfer_length == 0)
             m_transfer_state = 1;
@@ -683,7 +697,7 @@ INLINE void HuC6280::UnofficialOPCode()
 #if defined(GG_DEBUG)
     u16 opcode_address = m_PC.GetValue() - 1;
     u8 opcode = m_memory->Read(opcode_address);
-    Debug("** HuC6280 --> UNOFFICIAL OP Code (%02X) at $%.4X -- %s", opcode, opcode_address, k_huc6280_opcode_names[opcode]);
+    Debug("** HuC6280 --> UNOFFICIAL OP Code (%02X) at $%.4X -- %s", opcode, opcode_address, k_huc6280_opcode_names[opcode].name[GG_Disassembler_Syntax_Geargrafx]);
 #endif
 }
 

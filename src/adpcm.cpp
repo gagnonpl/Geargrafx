@@ -23,12 +23,14 @@
 #include "adpcm.h"
 #include "geargrafx_core.h"
 #include "cdrom.h"
+#include "trace_logger.h"
 
 Adpcm::Adpcm()
 {
     InitPointer(m_core);
     InitPointer(m_scsi_controller);
     InitPointer(m_trace_logger);
+    m_clock_speed = GG_ADPCM_DEFAULT_CLOCK_SPEED;
     Reset();
 
     m_state.CONTROL = &m_control;
@@ -60,9 +62,81 @@ void Adpcm::Init(GeargrafxCore* core, CdRom* cdrom, ScsiController* scsi_control
     Reset();
 }
 
+void Adpcm::SetClockSpeed(float clock_speed)
+{
+    m_clock_speed = clock_speed;
+    m_cycles_per_sample = CalculateCyclesPerSample(m_sample_rate & 0x0F);
+}
+
+float Adpcm::GetClockSpeed() const
+{
+    return m_clock_speed;
+}
+
 void Adpcm::SetTraceLogger(TraceLogger* trace_logger)
 {
     m_trace_logger = trace_logger;
+}
+
+void Adpcm::LogAdpcmEvent(u8 event, u16 reg, u8 value, u16 address)
+{
+#if !defined(GG_DISABLE_DISASSEMBLER)
+    GG_Trace_Entry e = {};
+    e.type = TRACE_ADPCM;
+    e.adpcm.event = event;
+    e.adpcm.reg = (u8)(reg & 0xFF);
+    e.adpcm.value = value;
+    e.adpcm.address = address;
+    e.adpcm.length = m_length;
+    e.adpcm.clock_speed = m_clock_speed;
+    bool playing = m_playing;
+    bool play_pending = m_play_pending;
+    bool half_irq = m_half_irq;
+    bool end_irq = m_end_irq;
+    if (event == TRACE_ADPCM_READ_COMPLETE)
+        e.adpcm.address = (u16)(m_read_address - 1);
+    else if (event == TRACE_ADPCM_WRITE_COMPLETE)
+        e.adpcm.address = (u16)(m_write_address - 1);
+    else if (event == TRACE_ADPCM_PLAY_START)
+    {
+        if (IS_SET_BIT(m_control, 7) &&
+            (!IS_SET_BIT(m_control, 5) || m_playing))
+            return;
+        playing = true;
+        play_pending = false;
+    }
+    else if (event == TRACE_ADPCM_PLAY_STOP)
+    {
+        bool active = IS_SET_BIT(m_control, 7) ?
+            (!IS_SET_BIT(m_control, 5) && m_playing) : (m_playing || m_play_pending);
+        if (!active)
+            return;
+        playing = false;
+        play_pending = false;
+    }
+    else if (event == TRACE_ADPCM_HALF_IRQ)
+    {
+        if (m_half_irq == (value != 0))
+            return;
+        half_irq = value != 0;
+    }
+    else if (event == TRACE_ADPCM_END_IRQ)
+    {
+        if (m_end_irq == (value != 0))
+            return;
+        end_irq = value != 0;
+    }
+    e.adpcm.state = (playing ? 0x01 : 0x00) |
+                    (play_pending ? 0x02 : 0x00) |
+                    (half_irq ? 0x04 : 0x00) |
+                    (end_irq ? 0x08 : 0x00);
+    m_trace_logger->TraceLog(e);
+#else
+    UNUSED(event);
+    UNUSED(reg);
+    UNUSED(value);
+    UNUSED(address);
+#endif
 }
 
 void Adpcm::Reset()
@@ -89,7 +163,6 @@ void Adpcm::Reset()
     m_sample = 2048;
     m_step_index = 0;
     m_adpcm_cycle_counter = 0;
-    m_audio_cycle_counter = 0;
     m_buffer_index = 0;
     m_frame_samples = 0;
     m_filter_state = 0.0f;
@@ -188,7 +261,6 @@ void Adpcm::SaveState(std::ostream& stream)
     stream.write(reinterpret_cast<const char*> (&m_sample), sizeof(m_sample));
     stream.write(reinterpret_cast<const char*> (&m_step_index), sizeof(m_step_index));
     stream.write(reinterpret_cast<const char*> (&m_adpcm_cycle_counter), sizeof(m_adpcm_cycle_counter));
-    stream.write(reinterpret_cast<const char*> (&m_audio_cycle_counter), sizeof(m_audio_cycle_counter));
     stream.write(reinterpret_cast<const char*> (&m_buffer_index), sizeof(m_buffer_index));
     stream.write(reinterpret_cast<const char*> (&m_frame_samples), sizeof(m_frame_samples));
     stream.write(reinterpret_cast<const char*> (m_buffer), sizeof(m_buffer));
@@ -225,13 +297,27 @@ void Adpcm::LoadState(std::istream& stream, int version)
     stream.read(reinterpret_cast<char*> (&m_sample), sizeof(m_sample));
     stream.read(reinterpret_cast<char*> (&m_step_index), sizeof(m_step_index));
     stream.read(reinterpret_cast<char*> (&m_adpcm_cycle_counter), sizeof(m_adpcm_cycle_counter));
-    stream.read(reinterpret_cast<char*> (&m_audio_cycle_counter), sizeof(m_audio_cycle_counter));
+
+    m_cycles_per_sample = CalculateCyclesPerSample(m_sample_rate & 0x0F);
+
+    if (version < 37)
+        m_adpcm_cycle_counter *= 65536;
+
+    if (version < 32)
+    {
+        s32 audio_cycle_counter = 0;
+        stream.read(reinterpret_cast<char*> (&audio_cycle_counter), sizeof(audio_cycle_counter));
+    }
 
     if (version >= 27)
     {
         stream.read(reinterpret_cast<char*> (&m_buffer_index), sizeof(m_buffer_index));
         stream.read(reinterpret_cast<char*> (&m_frame_samples), sizeof(m_frame_samples));
         stream.read(reinterpret_cast<char*> (m_buffer), sizeof(m_buffer));
+
+        m_buffer_index = CLAMP(m_buffer_index, 0, GG_AUDIO_BUFFER_SIZE - 2);
+        m_buffer_index &= ~1;
+        m_frame_samples = CLAMP(m_frame_samples, 0, GG_AUDIO_BUFFER_SIZE);
     }
     else
     {

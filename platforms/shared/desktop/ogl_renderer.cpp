@@ -170,7 +170,7 @@ void ogl_renderer_render(void)
     else
         render_emu_normal();
 
-    ImVec4 clear_color = ImVec4(config_video.background_color[0], config_video.background_color[1], config_video.background_color[2], 1.00f);
+    ImVec4 clear_color = ImVec4(config_video.background_color[config_emulator.theme][0], config_video.background_color[config_emulator.theme][1], config_video.background_color[config_emulator.theme][2], 1.00f);
 
     ImGuiIO& io = ImGui::GetIO();
     int fb_width = (int)(io.DisplaySize.x * io.DisplayFramebufferScale.x);
@@ -487,26 +487,54 @@ static void update_system_texture(void)
 
 static void update_debug_textures(void)
 {
-    glBindTexture(GL_TEXTURE_2D, ogl_renderer_emu_debug_huc6270_background[0]);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, emu_debug_background_buffer_width[0], emu_debug_background_buffer_height[0],
-            GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*) emu_debug_background_buffer[0]);
-    glBindTexture(GL_TEXTURE_2D, ogl_renderer_emu_debug_huc6270_background[1]);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, emu_debug_background_buffer_width[1], emu_debug_background_buffer_height[1],
-            GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*) emu_debug_background_buffer[1]);
+    bool is_sgx = emu_get_core()->GetMedia()->IsSGX();
 
-    for (int i = 0; i < 2; i++)
+    if (config_debug.show_huc6270_1_background)
+    {
+        glBindTexture(GL_TEXTURE_2D, ogl_renderer_emu_debug_huc6270_background[0]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, emu_debug_background_buffer_width[0], emu_debug_background_buffer_height[0],
+                GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*) emu_debug_background_buffer[0]);
+    }
+
+    if (is_sgx && config_debug.show_huc6270_2_background)
+    {
+        glBindTexture(GL_TEXTURE_2D, ogl_renderer_emu_debug_huc6270_background[1]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, emu_debug_background_buffer_width[1], emu_debug_background_buffer_height[1],
+                GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*) emu_debug_background_buffer[1]);
+    }
+
+    if (config_debug.show_huc6270_1_sprites)
+    {
         for (int s = 0; s < 64; s++)
         {
-            glBindTexture(GL_TEXTURE_2D, ogl_renderer_emu_debug_huc6270_sprites[i][s]);
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, emu_debug_sprite_widths[i][s], emu_debug_sprite_heights[i][s],
-                    GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*) emu_debug_sprite_buffers[i][s]);
+            glBindTexture(GL_TEXTURE_2D, ogl_renderer_emu_debug_huc6270_sprites[0][s]);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, emu_debug_sprite_widths[0][s], emu_debug_sprite_heights[0][s],
+                    GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*) emu_debug_sprite_buffers[0][s]);
         }
+    }
 
-    for (int i = 0; i < 2; i++)
+    if (is_sgx && config_debug.show_huc6270_2_sprites)
     {
-        glBindTexture(GL_TEXTURE_2D, ogl_renderer_emu_debug_huc6270_tiles[i]);
+        for (int s = 0; s < 64; s++)
+        {
+            glBindTexture(GL_TEXTURE_2D, ogl_renderer_emu_debug_huc6270_sprites[1][s]);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, emu_debug_sprite_widths[1][s], emu_debug_sprite_heights[1][s],
+                    GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*) emu_debug_sprite_buffers[1][s]);
+        }
+    }
+
+    if (config_debug.show_huc6270_1_tiles)
+    {
+        glBindTexture(GL_TEXTURE_2D, ogl_renderer_emu_debug_huc6270_tiles[0]);
         glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 32 * 8, 64 * 8,
-                GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*) emu_debug_tiles_buffer[i]);
+                GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*) emu_debug_tiles_buffer[0]);
+    }
+
+    if (is_sgx && config_debug.show_huc6270_2_tiles)
+    {
+        glBindTexture(GL_TEXTURE_2D, ogl_renderer_emu_debug_huc6270_tiles[1]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 32 * 8, 64 * 8,
+                GL_RGBA, GL_UNSIGNED_BYTE, (GLvoid*) emu_debug_tiles_buffer[1]);
     }
 }
 
@@ -586,9 +614,9 @@ static void render_quad_preset(int pass_index, uint32_t program, uint32_t textur
     uniforms.viewport_width = screen_geometry.physical_width;
     uniforms.viewport_height = screen_geometry.physical_height;
     uniforms.original_aspect = get_original_aspect();
-    uniforms.background_color[0] = config_video.background_color[0];
-    uniforms.background_color[1] = config_video.background_color[1];
-    uniforms.background_color[2] = config_video.background_color[2];
+    uniforms.background_color[0] = config_video.background_color[config_emulator.theme][0];
+    uniforms.background_color[1] = config_video.background_color[config_emulator.theme][1];
+    uniforms.background_color[2] = config_video.background_color[config_emulator.theme][2];
 
     ogl_shader_chain_apply_preset_uniforms(pass_index, &uniforms);
 

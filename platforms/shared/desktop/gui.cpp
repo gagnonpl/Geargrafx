@@ -41,7 +41,6 @@
 #include "gui_debug_memory.h"
 #include "gui_debug_disassembler.h"
 #include "gui_debug_psg.h"
-#include "gui_debug_trace_logger.h"
 
 static bool status_message_active = false;
 static char status_message[4096] = "";
@@ -51,13 +50,18 @@ static bool error_window_active = false;
 static char error_message[4096] = "";
 static bool loading_rom_active = false;
 static char loading_rom_path[4096] = "";
+static char loading_symbol_path[4096] = "";
 static bool loading_physical_cdrom = false;
 static void main_window(void);
 static void show_status_message(void);
 static void show_error_window(void);
 static void show_loading_popup(void);
-static void finish_loading_rom(void);
+static bool finish_loading_rom(void);
+static void update_window_visibility_padding(void);
 static void set_style(void);
+static void set_style_light(ImGuiStyle& style);
+static void set_style_dark(ImGuiStyle& style);
+static ImVec4 make_color(unsigned int rgb, float alpha = 1.0f);
 static void load_custom_palette_from_settings(void);
 static ImVec4 lerp(const ImVec4& a, const ImVec4& b, float t);
 
@@ -125,7 +129,8 @@ bool gui_init(void)
     gui_custom_palette_loaded = false;
 
     emu_audio_mute(!config_audio.enable);
-    emu_audio_huc6280a(config_audio.huc6280a);
+    emu_audio_psg_revision(config_audio.psg_revision);
+    emu_audio_adpcm_clock_speed(config_audio.adpcm_clock_mode, config_audio.adpcm_clock_speed);
     emu_audio_set_master_volume(config_audio.master_volume);
     emu_audio_psg_volume(config_audio.psg_volume);
     emu_audio_cdrom_volume(config_audio.cdrom_volume);
@@ -153,6 +158,7 @@ bool gui_init(void)
     emu_set_ignore_bad_sstate_crc(config_emulator.ignore_bad_sstate_crc);
     emu_set_backup_ram(config_emulator.backup_ram);
     emu_set_mb128_mode((GG_MB128_Mode)config_emulator.mb128_mode);
+    emu_set_disassembler_syntax(config_debug.dis_syntax);
     emu_set_palette(config_video.palette);
     emu_set_turbo_tap(config_input.turbo_tap);
     for (int i = 0; i < GG_MAX_GAMEPADS; i++)
@@ -178,6 +184,7 @@ bool gui_init(void)
     strncpy_fit(gui_mb128_path, config_emulator.mb128_path.c_str(), sizeof(gui_mb128_path));
     strncpy_fit(gui_syscard_bios_path, config_emulator.syscard_bios_path.c_str(), sizeof(gui_syscard_bios_path));
     strncpy_fit(gui_gameexpress_bios_path, config_emulator.gameexpress_bios_path.c_str(), sizeof(gui_gameexpress_bios_path));
+    strncpy_fit(gui_mcp_http_address, config_emulator.mcp_http_address.c_str(), sizeof(gui_mcp_http_address));
     if (strlen(gui_syscard_bios_path) > 0)
         gui_load_bios(gui_syscard_bios_path, true);
     if (strlen(gui_gameexpress_bios_path) > 0)
@@ -204,6 +211,8 @@ void gui_destroy(void)
 void gui_render(void)
 {
     ImGui::NewFrame();
+
+    update_window_visibility_padding();
 
     if (config_debug.debug)
         ImGui::DockSpaceOverViewport();
@@ -374,17 +383,17 @@ void gui_load_bios(const char* path, bool syscard)
         return;
     }
 
-    if (!emu_get_core()->GetMedia()->IsValidBios(syscard))
-    {
-        std::string message("Invalid BIOS file:\n");
-        message += filename;
-        message += "\n\nMake sure the file is a valid BIOS file.";
-        gui_set_error_message(message.c_str());
-        gui_action_reset();
-        return;
-    }
+    Media* media = emu_get_core()->GetMedia();
+    bool known_bios = syscard ? media->IsSyscardBiosValid() : media->IsGameExpressBiosValid();
 
     gui_action_reset();
+
+    if (!known_bios)
+    {
+        std::string message("Custom or unknown BIOS loaded: ");
+        message += filename;
+        gui_set_status_message(message.c_str(), 4000);
+    }
 }
 
 void gui_load_palette(const char* path)
@@ -447,7 +456,7 @@ void gui_load_palette(const char* path)
         Log("Warning: Could not save custom palette to %s", dest_path.c_str());
     }
 
-    config_video.palette = 2;
+    config_video.palette = 3;
     emu_set_palette(config_video.palette);
     gui_custom_palette_loaded = true;
 
@@ -456,10 +465,10 @@ void gui_load_palette(const char* path)
     gui_set_status_message(message.c_str(), 3000);
 }
 
-void gui_load_rom(const char* path)
+bool gui_load_rom(const char* path, const char* symbol_path)
 {
     if (loading_rom_active)
-        return;
+        return false;
 
     loading_physical_cdrom = false;
 
@@ -469,9 +478,48 @@ void gui_load_rom(const char* path)
 
     strncpy(loading_rom_path, path, sizeof(loading_rom_path) - 1);
     loading_rom_path[sizeof(loading_rom_path) - 1] = '\0';
+    if (IsValidPointer(symbol_path) && (strlen(symbol_path) > 0))
+    {
+        strncpy(loading_symbol_path, symbol_path, sizeof(loading_symbol_path) - 1);
+        loading_symbol_path[sizeof(loading_symbol_path) - 1] = '\0';
+    }
+    else
+        loading_symbol_path[0] = '\0';
     loading_rom_active = true;
 
     emu_load_media_async(path);
+
+    return true;
+}
+
+bool gui_is_rom_loading(void)
+{
+    return loading_rom_active;
+}
+
+bool gui_finish_loading_rom(void)
+{
+    if (!loading_rom_active || emu_is_media_loading())
+        return false;
+
+    loading_rom_active = false;
+    gui_dialog_in_use = false;
+    bool success = emu_finish_media_loading();
+
+    if (success)
+        success = finish_loading_rom();
+    else
+    {
+        std::string message("Error loading media:\n");
+        message += loading_rom_path;
+        gui_set_error_message(message.c_str());
+
+        emu_get_core()->GetMedia()->Reset();
+        gui_action_reset();
+        loading_physical_cdrom = false;
+    }
+
+    return success;
 }
 
 void gui_load_physical_cdrom(const char* device_id)
@@ -490,6 +538,7 @@ void gui_load_physical_cdrom(const char* device_id)
 
     strncpy(loading_rom_path, device_id, sizeof(loading_rom_path) - 1);
     loading_rom_path[sizeof(loading_rom_path) - 1] = '\0';
+    loading_symbol_path[0] = '\0';
     loading_rom_active = true;
 
     emu_load_physical_cdrom_async(device_id);
@@ -514,6 +563,29 @@ void gui_set_error_message(const char* message)
 {
     strncpy_fit(error_message, message, sizeof(error_message));
     error_window_active = true;
+}
+
+void gui_set_style(void)
+{
+    set_style();
+}
+
+static void update_window_visibility_padding(void)
+{
+    static bool initialized = false;
+    static ImVec2 previous_work_size(0.0f, 0.0f);
+
+    ImGuiViewport* viewport = ImGui::GetMainViewport();
+    if (!viewport || viewport->WorkSize.x <= 0.0f || viewport->WorkSize.y <= 0.0f)
+        return;
+
+    ImGuiStyle& style = ImGui::GetStyle();
+    bool viewport_shrank = initialized && ((viewport->WorkSize.x < previous_work_size.x) || (viewport->WorkSize.y < previous_work_size.y));
+
+    style.DisplayWindowPadding = viewport_shrank ? ImVec2(100.0f, 70.0f) : ImVec2(19.0f, 19.0f);
+
+    previous_work_size = viewport->WorkSize;
+    initialized = true;
 }
 
 static void main_window(void)
@@ -749,24 +821,7 @@ static void show_loading_popup(void)
 
     if (!emu_is_media_loading())
     {
-        loading_rom_active = false;
-        gui_dialog_in_use = false;
-        bool success = emu_finish_media_loading();
-
-        if (success)
-        {
-            finish_loading_rom();
-        }
-        else
-        {
-            std::string message("Error loading media:\n");
-            message += loading_rom_path;
-            gui_set_error_message(message.c_str());
-
-            emu_get_core()->GetMedia()->Reset();
-            gui_action_reset();
-            loading_physical_cdrom = false;
-        }
+        gui_finish_loading_rom();
         return;
     }
 
@@ -775,7 +830,9 @@ static void show_loading_popup(void)
     ImVec2 center = ImGui::GetMainViewport()->GetCenter();
     const ImGuiStyle& style = ImGui::GetStyle();
     ImVec4 loading_highlight = style.Colors[ImGuiCol_HeaderHovered];
+    ImVec4 loading_background = style.Colors[ImGuiCol_PopupBg];
     ImVec4 loading_border = loading_highlight;
+    loading_background.w = 0.95f;
     loading_border.w = 0.80f;
 
     ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
@@ -783,7 +840,7 @@ static void show_loading_popup(void)
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(30.0f, 20.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, 12.0f));
-    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.10f, 0.10f, 0.10f, 0.95f));
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, loading_background);
     ImGui::PushStyleColor(ImGuiCol_Border, loading_border);
     ImGui::OpenPopup("##loading");
 
@@ -806,9 +863,9 @@ static void show_loading_popup(void)
     ImGui::PopStyleVar(3);
 }
 
-static void finish_loading_rom(void)
+static bool finish_loading_rom(void)
 {
-    if (emu_get_core()->GetMedia()->IsCDROM() && !emu_get_core()->GetMedia()->IsLoadedBios())
+    if (emu_get_core()->GetMedia()->IsCDROM() && !emu_get_core()->GetMedia()->IsBiosReady())
     {
         bool is_gameexpress = emu_get_core()->GetMedia()->IsGameExpress();
         std::string bios_name = is_gameexpress ? "Game Express BIOS" : "System Card BIOS";
@@ -821,7 +878,7 @@ static void finish_loading_rom(void)
 
         emu_get_core()->GetMedia()->Reset();
         gui_action_reset();
-        return;
+        return false;
     }
 
     gui_debug_reset();
@@ -830,11 +887,16 @@ static void finish_loading_rom(void)
     if (!loading_physical_cdrom)
 #endif
     {
-        std::string str(loading_rom_path);
-        str = str.substr(0, str.find_last_of("."));
-        if (!gui_debug_load_symbols_file((str + ".sym").c_str()))
-            if (!gui_debug_load_symbols_file((str + ".lbl").c_str()))
-                gui_debug_load_symbols_file((str + ".noi").c_str());
+        if (loading_symbol_path[0] != '\0')
+            gui_debug_load_symbols_file(loading_symbol_path);
+        else
+        {
+            std::string str(loading_rom_path);
+            str = str.substr(0, str.find_last_of("."));
+            if (!gui_debug_load_symbols_file((str + ".sym").c_str()))
+                if (!gui_debug_load_symbols_file((str + ".lbl").c_str()))
+                    gui_debug_load_symbols_file((str + ".noi").c_str());
+        }
     }
 
     gui_debug_auto_load_settings();
@@ -851,6 +913,8 @@ static void finish_loading_rom(void)
 
     if (!emu_is_empty())
         application_update_title_with_rom(emu_get_core()->GetMedia()->GetFileName());
+
+    return true;
 }
 
 static void show_error_window(void)
@@ -910,6 +974,106 @@ static void set_style(void)
     style.ButtonTextAlign = ImVec2(0.5f, 0.5f);
     style.SelectableTextAlign = ImVec2(0.0f, 0.0f);
 
+    if (config_emulator.theme == config_Theme_Light)
+        set_style_light(style);
+    else
+        set_style_dark(style);
+}
+
+static void set_style_light(ImGuiStyle& style)
+{
+    ImGui::StyleColorsLight();
+
+    const ImVec4 text = make_color(0x21201C);
+    const ImVec4 text_secondary = make_color(0x63635E);
+    const ImVec4 window = make_color(0xF9F9F8);
+    const ImVec4 child = make_color(0xFDFDFC);
+    const ImVec4 popup = make_color(0xFDFDFC);
+    const ImVec4 control = make_color(0xF1F0EF);
+    const ImVec4 neutral_active = make_color(0xE2E1DE);
+    const ImVec4 border_subtle = make_color(0xDAD9D6);
+    const ImVec4 border = make_color(0xCFCECA);
+    const ImVec4 grab = make_color(0xBCBBB5);
+    const ImVec4 grab_hover = make_color(0x82827C);
+    const ImVec4 slider_grab = make_color(0x8D8D86);
+    const ImVec4 accent_soft = make_color(0xFFE0E5);
+    const ImVec4 accent_hover = make_color(0xFFDCE1);
+    const ImVec4 accent_selected = make_color(0xFFCED6);
+    const ImVec4 accent_edge = make_color(0xE592A3);
+    const ImVec4 accent_ink = make_color(0xCA244D);
+    const ImVec4 accent_strong = make_color(0x64172B);
+    const ImVec4 accent_bright = make_color(0xDF0263);
+
+    style.Colors[ImGuiCol_Text] = text;
+    style.Colors[ImGuiCol_TextDisabled] = text_secondary;
+    style.Colors[ImGuiCol_WindowBg] = window;
+    style.Colors[ImGuiCol_ChildBg] = child;
+    style.Colors[ImGuiCol_PopupBg] = popup;
+    style.Colors[ImGuiCol_Border] = border;
+    style.Colors[ImGuiCol_BorderShadow] = make_color(0x000000, 0.0f);
+    style.Colors[ImGuiCol_FrameBg] = control;
+    style.Colors[ImGuiCol_FrameBgHovered] = accent_soft;
+    style.Colors[ImGuiCol_FrameBgActive] = accent_selected;
+    style.Colors[ImGuiCol_TitleBg] = control;
+    style.Colors[ImGuiCol_TitleBgActive] = accent_bright;
+    style.Colors[ImGuiCol_TitleBgCollapsed] = control;
+    style.Colors[ImGuiCol_MenuBarBg] = window;
+    style.Colors[ImGuiCol_ScrollbarBg] = window;
+    style.Colors[ImGuiCol_ScrollbarGrab] = grab;
+    style.Colors[ImGuiCol_ScrollbarGrabHovered] = grab_hover;
+    style.Colors[ImGuiCol_ScrollbarGrabActive] = accent_ink;
+    style.Colors[ImGuiCol_CheckMark] = accent_ink;
+    style.Colors[ImGuiCol_SliderGrab] = slider_grab;
+    style.Colors[ImGuiCol_SliderGrabActive] = accent_ink;
+    style.Colors[ImGuiCol_Button] = control;
+    style.Colors[ImGuiCol_ButtonHovered] = accent_soft;
+    style.Colors[ImGuiCol_ButtonActive] = accent_selected;
+    style.Colors[ImGuiCol_Header] = control;
+    style.Colors[ImGuiCol_HeaderHovered] = accent_soft;
+    style.Colors[ImGuiCol_HeaderActive] = accent_selected;
+    style.Colors[ImGuiCol_Separator] = border_subtle;
+    style.Colors[ImGuiCol_SeparatorHovered] = accent_ink;
+    style.Colors[ImGuiCol_SeparatorActive] = accent_ink;
+    style.Colors[ImGuiCol_ResizeGrip] = make_color(0xBCBBB5, 0.55f);
+    style.Colors[ImGuiCol_ResizeGripHovered] = make_color(0xE592A3, 0.80f);
+    style.Colors[ImGuiCol_ResizeGripActive] = make_color(0xCA244D, 0.95f);
+    style.Colors[ImGuiCol_Tab] = control;
+    style.Colors[ImGuiCol_TabHovered] = accent_soft;
+    style.Colors[ImGuiCol_TabActive] = accent_selected;
+    style.Colors[ImGuiCol_TabUnfocused] = window;
+    style.Colors[ImGuiCol_TabUnfocusedActive] = neutral_active;
+    style.Colors[ImGuiCol_PlotLines] = accent_ink;
+    style.Colors[ImGuiCol_PlotLinesHovered] = accent_strong;
+    style.Colors[ImGuiCol_PlotHistogram] = accent_ink;
+    style.Colors[ImGuiCol_PlotHistogramHovered] = accent_strong;
+    style.Colors[ImGuiCol_TableHeaderBg] = control;
+    style.Colors[ImGuiCol_TableBorderStrong] = border;
+    style.Colors[ImGuiCol_TableBorderLight] = border_subtle;
+    style.Colors[ImGuiCol_TableRowBg] = make_color(0x000000, 0.0f);
+    style.Colors[ImGuiCol_TableRowBgAlt] = make_color(0x21201C, 0.03f);
+    style.Colors[ImGuiCol_TextSelectedBg] = accent_hover;
+    style.Colors[ImGuiCol_DragDropTarget] = accent_bright;
+    style.Colors[ImGuiCol_NavHighlight] = make_color(0xDF0263, 0.90f);
+    style.Colors[ImGuiCol_NavWindowingHighlight] = make_color(0x21201C, 0.70f);
+    style.Colors[ImGuiCol_NavWindowingDimBg] = make_color(0x21201C, 0.20f);
+    style.Colors[ImGuiCol_ModalWindowDimBg] = make_color(0x21201C, 0.30f);
+
+    style.Colors[ImGuiCol_DockingPreview] = make_color(0xDF0263, 0.45f);
+    style.Colors[ImGuiCol_DockingEmptyBg] = ImVec4(
+        config_video.background_color_debugger[config_Theme_Light][0],
+        config_video.background_color_debugger[config_Theme_Light][1],
+        config_video.background_color_debugger[config_Theme_Light][2], 1.0f);
+    style.Colors[ImGuiCol_TabSelected] = accent_selected;
+    style.Colors[ImGuiCol_TabSelectedOverline] = accent_bright;
+    style.Colors[ImGuiCol_TabDimmed] = window;
+    style.Colors[ImGuiCol_TabDimmedSelected] = control;
+    style.Colors[ImGuiCol_TabDimmedSelectedOverline] = accent_edge;
+}
+
+static void set_style_dark(ImGuiStyle& style)
+{
+    ImGui::StyleColorsDark();
+
     style.Colors[ImGuiCol_Text] = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     style.Colors[ImGuiCol_TextDisabled] = ImVec4(0.5921568870544434f, 0.5921568870544434f, 0.5921568870544434f, 1.0f);
     style.Colors[ImGuiCol_WindowBg] = ImVec4(0.060085229575634f, 0.060085229575634f, 0.06008583307266235f, 1.0f);
@@ -965,7 +1129,7 @@ static void set_style(void)
     style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.1450980454683304f, 0.1450980454683304f, 0.1490196138620377f, 0.7f);
 
     style.Colors[ImGuiCol_DockingPreview] = style.Colors[ImGuiCol_HeaderActive] * ImVec4(1.0f, 1.0f, 1.0f, 0.7f);
-    style.Colors[ImGuiCol_DockingEmptyBg] = ImVec4(config_video.background_color_debugger[0], config_video.background_color_debugger[1], config_video.background_color_debugger[2], 1.00f);
+    style.Colors[ImGuiCol_DockingEmptyBg] = ImVec4(config_video.background_color_debugger[config_emulator.theme][0], config_video.background_color_debugger[config_emulator.theme][1], config_video.background_color_debugger[config_emulator.theme][2], 1.00f);
     style.Colors[ImGuiCol_TabHovered] = style.Colors[ImGuiCol_HeaderHovered];
     //style.Colors[ImGuiCol_Tab] = lerp(style.Colors[ImGuiCol_Header], style.Colors[ImGuiCol_TitleBgActive], 0.80f);
     style.Colors[ImGuiCol_TabSelected] = lerp(style.Colors[ImGuiCol_HeaderActive], style.Colors[ImGuiCol_TitleBgActive], 0.60f);
@@ -1008,6 +1172,14 @@ static void load_custom_palette_from_settings(void)
     emu_set_custom_palette(palette_data);
     gui_custom_palette_loaded = true;
     Log("Custom palette loaded from: %s", palette_path.c_str());
+}
+
+static ImVec4 make_color(unsigned int rgb, float alpha)
+{
+    return ImVec4(((rgb >> 16) & 0xFF) / 255.0f,
+                  ((rgb >> 8) & 0xFF) / 255.0f,
+                  (rgb & 0xFF) / 255.0f,
+                  alpha);
 }
 
 static ImVec4 lerp(const ImVec4& a, const ImVec4& b, float t)

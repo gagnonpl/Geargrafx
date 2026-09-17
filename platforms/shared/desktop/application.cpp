@@ -64,23 +64,27 @@ static void save_window_size(void);
 #if defined(__APPLE__)
 static void* macos_fullscreen_observer = NULL;
 static void* macos_nswindow = NULL;
+static bool macos_new_instance_enabled = false;
 extern "C" void* macos_install_fullscreen_observer(void* nswindow, void(*enter_cb)(), void(*exit_cb)());
 extern "C" void macos_set_native_fullscreen(void* nswindow, bool enter);
 extern "C" void macos_refocus_window(void* nswindow);
+extern "C" void macos_install_dock_menu(void);
+extern "C" void macos_remove_dock_menu(void);
+extern "C" void macos_launch_new_instance(void);
 #endif
 
-int application_init(const char* rom_file, const char* symbol_file, bool force_fullscreen, bool force_windowed, int mcp_mode, int mcp_tcp_port)
+int application_init(const ApplicationParams& params)
 {
     Log("\n%s", GG_TITLE_ASCII);
     Log("%s %s Desktop App", GG_TITLE, GG_VERSION);
 
     application_show_menu = true;
 
-    if (force_fullscreen)
+    if (params.force_fullscreen)
     {
         config_emulator.fullscreen = true;
     }
-    else if (force_windowed)
+    else if (params.force_windowed)
     {
         config_emulator.fullscreen = false;
     }
@@ -124,29 +128,40 @@ int application_init(const char* rom_file, const char* symbol_file, bool force_f
     if (config_emulator.fullscreen)
         application_trigger_fullscreen(true);
 
-    if (IsValidPointer(rom_file) && (strlen(rom_file) > 0))
+    bool rom_file_argument = IsValidPointer(params.rom_file) && (strlen(params.rom_file) > 0);
+    bool symbol_file_argument = IsValidPointer(params.symbol_file) && (strlen(params.symbol_file) > 0);
+
+    if (rom_file_argument)
     {
-        Log("Rom file argument: %s", rom_file);
-        gui_load_rom(rom_file);
+        Log("Rom file argument: %s", params.rom_file);
+        if (symbol_file_argument)
+            Log("Symbol file argument: %s", params.symbol_file);
+        gui_load_rom(params.rom_file, params.symbol_file);
     }
 
-    if (IsValidPointer(symbol_file) && (strlen(symbol_file) > 0))
+    if (!rom_file_argument && symbol_file_argument)
     {
-        Log("Symbol file argument: %s", symbol_file);
+        Log("Symbol file argument: %s", params.symbol_file);
         gui_debug_reset_symbols();
-        gui_debug_load_symbols_file(symbol_file);
+        gui_debug_load_symbols_file(params.symbol_file);
     }
 
-    if (mcp_mode >= 0)
+    if (params.mcp_mode >= 0)
     {
-        Log("Auto-starting MCP server (mode: %s, port: %d)...", 
-            mcp_mode == 0 ? "stdio" : "http", mcp_tcp_port);
+        const char* mcp_http_address = params.mcp_http_address.empty() ? "127.0.0.1" : params.mcp_http_address.c_str();
+        if (params.mcp_mode == 0)
+            Log("Auto-starting MCP server (mode: stdio)...");
+        else
+            Log("Auto-starting MCP server (mode: http, address: %s, port: %d)...", mcp_http_address, params.mcp_tcp_port);
         config_debug.debug = true;
         emu_set_overscan(0);
         emu_set_scanline_start_end(0, 241);
-        emu_mcp_set_transport(mcp_mode, mcp_tcp_port);
+        emu_mcp_set_transport(params.mcp_mode, params.mcp_tcp_port, mcp_http_address);
         emu_mcp_start();
     }
+
+    if (params.turbolink_session_set)
+        emu_turbolink_connect(params.turbolink_session);
 
     application_refocus_window();
 
@@ -155,12 +170,16 @@ int application_init(const char* rom_file, const char* symbol_file, bool force_f
 
 void application_destroy(void)
 {
+#if defined(__APPLE__)
+    macos_remove_dock_menu();
+#endif
+
     remove_directory_and_contents(config_temp_path);
     save_window_size();
-    emu_destroy();
     ogl_renderer_destroy();
     ImGui_ImplSDL3_Shutdown();
     gui_destroy();
+    emu_destroy();
     gamepad_destroy();
     sdl_destroy();
     single_instance_destroy();
@@ -275,11 +294,15 @@ void application_update_title_with_rom(const char* rom)
 
 void application_input_pump(void)
 {
-    events_emu();
+    events_apply_input();
 }
 
 bool application_check_single_instance(const char* rom_file, const char* symbol_file)
 {
+#if defined(__APPLE__)
+    macos_new_instance_enabled = !config_debug.single_instance;
+#endif
+
     if (!config_debug.single_instance)
         return true;
 
@@ -297,9 +320,28 @@ bool application_check_single_instance(const char* rom_file, const char* symbol_
     return true;
 }
 
+#if defined(__APPLE__)
+bool application_can_launch_new_instance(void)
+{
+    return macos_new_instance_enabled;
+}
+
+void application_launch_new_instance(void)
+{
+    if (macos_new_instance_enabled)
+        macos_launch_new_instance();
+}
+#endif
+
 static bool sdl_init(void)
 {
     Debug("Initializing SDL...");
+
+    SDL_SetHint(SDL_HINT_VIDEO_ALLOW_SCREENSAVER, config_emulator.allow_screensaver ? "1" : "0");
+
+#if defined(_WIN32)
+    SDL_SetHint(SDL_HINT_WINDOWS_ENABLE_MENU_MNEMONICS, "1");
+#endif
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD))
     {
@@ -356,6 +398,17 @@ static bool sdl_init(void)
 
     display_gl_context = SDL_GL_CreateContext(application_sdl_window);
 
+#if defined(__linux__)
+    if (!display_gl_context)
+    {
+        Log("Unable to create OpenGL 3.3 context, trying the default OpenGL context");
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 0);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, 0);
+        display_gl_context = SDL_GL_CreateContext(application_sdl_window);
+    }
+#endif
+
     if (!display_gl_context)
     {
         SDL_ERROR("SDL_GL_CreateContext");
@@ -372,9 +425,12 @@ static bool sdl_init(void)
         macos_nswindow = nswindow;
         macos_fullscreen_observer = macos_install_fullscreen_observer(nswindow, on_enter_fullscreen, on_exit_fullscreen);
     }
+
+    if (macos_new_instance_enabled)
+        macos_install_dock_menu();
 #endif
 
-    display_set_vsync(config_video.sync);
+    display_use_vsync_if_enabled();
     display_check_mixed_refresh_rates();
 
     SDL_SetWindowMinimumSize(application_sdl_window, (int)(500 * content_scale), (int)(300 * content_scale));
@@ -435,8 +491,8 @@ static void handle_single_instance(void)
     if (single_instance_get_pending_load(s_pending_rom_path, sizeof(s_pending_rom_path), s_pending_symbol_path, sizeof(s_pending_symbol_path)))
     {
         if (s_pending_rom_path[0] != '\0')
-            gui_load_rom(s_pending_rom_path);
-        if (s_pending_symbol_path[0] != '\0')
+            gui_load_rom(s_pending_rom_path, s_pending_symbol_path);
+        else if (s_pending_symbol_path[0] != '\0')
         {
             gui_debug_reset_symbols();
             gui_debug_load_symbols_file(s_pending_symbol_path);
@@ -498,15 +554,15 @@ static void sdl_events_app(const SDL_Event* event)
         }
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
         {
-            display_set_vsync(config_video.sync);
-            if (config_emulator.pause_when_inactive && !paused_when_focus_lost)
+            display_use_vsync_if_enabled();
+            if (config_emulator.pause_when_inactive && !emu_turbolink_is_active() && !paused_when_focus_lost)
                 emu_resume();
             break;
         }
         case SDL_EVENT_WINDOW_FOCUS_LOST:
         {
-            display_set_vsync(false);
-            if (config_emulator.pause_when_inactive)
+            display_disable_vsync();
+            if (config_emulator.pause_when_inactive && !emu_turbolink_is_active())
             {
                 paused_when_focus_lost = emu_is_paused();
                 emu_pause();
@@ -520,7 +576,7 @@ static void sdl_events_app(const SDL_Event* event)
             {
                 current_display_id = new_display;
                 display_check_mixed_refresh_rates();
-                if (config_video.sync && !display_is_vsync_forced_off())
+                if (config_video.sync_mode != config_VideoSync_Disabled && !display_is_vsync_forced_off())
                     display_recreate_gl_context();
                 else
                 {
@@ -559,13 +615,16 @@ static void run_emulator(void)
     if (!display_should_run_emu_frame())
         return;
 
+    events_poll_input();
+    events_apply_input();
+
     config_emulator.paused = emu_is_paused();
     emu_audio_sync = config_audio.sync;
     emu_update();
 
-    if (!events_input_updated())
-        events_emu();
     events_reset_input();
+
+    display_update_vsync_state();
 }
 
 static void save_window_size(void)

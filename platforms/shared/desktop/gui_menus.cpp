@@ -24,10 +24,12 @@
 #include "gui_popups.h"
 #include "gui_actions.h"
 #include "gui_debug_disassembler.h"
+#include "gui_debug_widgets.h"
 #include "config.h"
 #include "application.h"
 #include "display.h"
 #include "gamepad.h"
+#include "sound_queue.h"
 #include "emu.h"
 #include "ogl_renderer.h"
 #include "ogl_shader_chain.h"
@@ -53,6 +55,9 @@ static bool open_syscard_bios = false;
 static bool open_gameexpress_bios = false;
 static bool save_debug_settings = false;
 static bool load_debug_settings = false;
+static const ImVec4 service_turbolink_color(0.39f, 0.58f, 0.93f, 1.0f);
+static const ImVec4 service_mcp_http_color(0.10f, 0.90f, 0.10f, 1.0f);
+static const ImVec4 service_mcp_stdio_color(0.90f, 0.70f, 0.10f, 1.0f);
 static bool open_frame_counter = false;
 static void frame_counter_window(void);
 #if defined(GG_ENABLE_PHYSICAL_CDROM)
@@ -71,14 +76,24 @@ static bool shader_parameter_is_integer(const ShaderPresetParameter* parameter);
 static int shader_parameter_round_to_int(float value);
 static void menu_input(void);
 static void menu_audio(void);
+static void menu_turbolink(void);
 static void menu_debug(void);
 static void menu_about(void);
+static void draw_background_color_menu(const char* label, int theme);
 static void draw_mcp_status(void);
 static void file_dialogs(void);
 static bool media_menu_actions_enabled(void);
 static const char* get_current_media_directory_text(void);
-static void keyboard_configuration_item(const char* text, SDL_Scancode* key, int player);
+static void keyboard_bindings_configuration_item(const char* text,
+    SDL_Scancode* primary, SDL_Scancode* secondary, int player, config_InputProfile profile);
 static void gamepad_configuration_item(const char* text, int* button, int player);
+static void gamepad_bindings_configuration_item(const char* text, int* primary, int* secondary, int player, config_InputProfile profile);
+static void keyboard_profile_menu(int player, config_InputProfile profile);
+static void gamepad_profile_menu(int player, config_InputProfile profile);
+static const char* gamepad_button_name(int button);
+static const char* input_profile_name(config_InputProfile profile);
+static config_InputProfile active_input_profile(int player);
+static GG_Keys resolved_avenue_pad_3_button(int player, bool automatic_only);
 static void hotkey_configuration_item(const char* text, config_Hotkey* hotkey);
 static void gamepad_device_selector(int player);
 static void draw_savestate_slot_info(int slot);
@@ -122,6 +137,7 @@ void gui_main_menu(void)
         menu_video();
         menu_input();
         menu_audio();
+        menu_turbolink();
         menu_debug();
         menu_about();
         draw_mcp_status();
@@ -141,6 +157,7 @@ static void menu_geargrafx(void)
     {
         gui_in_use = true;
         bool media_actions_enabled = media_menu_actions_enabled();
+        bool turbolink_active = emu_turbolink_is_active();
 
         if (ImGui::MenuItem("Open ROM/CD...", config_hotkeys[config_HotkeyIndex_OpenROM].str))
         {
@@ -175,7 +192,7 @@ static void menu_geargrafx(void)
                     if (ImGui::MenuItem(config_emulator.recent_roms[i].c_str(), shortcut))
                     {
                         char rom_path[4096];
-                        strcpy(rom_path, config_emulator.recent_roms[i].c_str());
+                        strncpy_fit(rom_path, config_emulator.recent_roms[i].c_str(), sizeof(rom_path));
                         gui_load_rom(rom_path);
                     }
                 }
@@ -183,6 +200,11 @@ static void menu_geargrafx(void)
 
             ImGui::EndMenu();
         }
+
+        ImGui::Separator();
+        ImGui::MenuItem("Enable Softpatching", "", &config_emulator.softpatching);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Automatically applies a matching .ips patch next to the ROM when loading.");
 
         ImGui::Separator();
         
@@ -198,12 +220,12 @@ static void menu_geargrafx(void)
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Fast Forward", config_hotkeys[config_HotkeyIndex_FFWD].str, &config_emulator.ffwd, media_actions_enabled))
+        if (ImGui::MenuItem("Fast Forward", config_hotkeys[config_HotkeyIndex_FFWD].str, &config_emulator.ffwd, media_actions_enabled && !turbolink_active))
         {
             gui_action_ffwd();
         }
 
-        if (ImGui::BeginMenu("Fast Forward Speed"))
+        if (ImGui::BeginMenu("Fast Forward Speed", !turbolink_active))
         {
             ImGui::PushItemWidth(100.0f);
             ImGui::Combo("##fwd", &config_emulator.ffwd_speed, "X 1.5\0X 2\0X 2.5\0X 3\0Unlimited\0\0");
@@ -211,7 +233,7 @@ static void menu_geargrafx(void)
             ImGui::EndMenu();
         }
 
-        if (ImGui::BeginMenu("Rewind"))
+        if (ImGui::BeginMenu("Rewind", !turbolink_active))
         {
             if (ImGui::MenuItem("Enabled", config_hotkeys[config_HotkeyIndex_Rewind].str, &config_rewind.enabled))
                 rewind_reset();
@@ -219,6 +241,24 @@ static void menu_geargrafx(void)
             ImGui::PushItemWidth(140.0f);
             ImGui::SliderFloat("Speed", &config_rewind.speed, 1.0f, 8.0f, "%.0fx");
             ImGui::PopItemWidth();
+
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Run-Ahead", !turbolink_active))
+        {
+            ImGui::PushItemWidth(140.0f);
+            ImGui::Combo("##runahead", &config_emulator.runahead, "Disabled\0" "1 Frame\0" "2 Frames\0" "3 Frames\0\0");
+            ImGui::PopItemWidth();
+
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("Reduces input lag by speculatively running extra frames each update.");
+                ImGui::Text("Every frame multiplies CPU cost, so use the lowest value that feels right.");
+                ImGui::Text("Ignored while fast-forwarding or with a physical CD-ROM.");
+                ImGui::EndTooltip();
+            }
 
             ImGui::EndMenu();
         }
@@ -242,7 +282,7 @@ static void menu_geargrafx(void)
             save_state = true;
         }
 
-        if (ImGui::MenuItem("Load State From...", "", false, media_actions_enabled))
+        if (ImGui::MenuItem("Load State From...", "", false, media_actions_enabled && !turbolink_active))
         {
             open_state = true;
         }
@@ -274,7 +314,7 @@ static void menu_geargrafx(void)
             emu_save_state_slot(config_emulator.save_slot + 1);
         }
 
-        if (ImGui::MenuItem("Load State", config_hotkeys[config_HotkeyIndex_LoadState].str, false, media_actions_enabled))
+        if (ImGui::MenuItem("Load State", config_hotkeys[config_HotkeyIndex_LoadState].str, false, media_actions_enabled && !turbolink_active))
         {
             std::string message("Loading state from slot ");
             message += std::to_string(config_emulator.save_slot + 1);
@@ -495,6 +535,8 @@ static void menu_emulator(void)
 
         if (ImGui::BeginMenu("BIOS"))
         {
+            Media* media = emu_get_core()->GetMedia();
+
             if (ImGui::BeginMenu("System Card"))
             {
                 if (ImGui::MenuItem("Load System Card BIOS..."))
@@ -510,14 +552,19 @@ static void menu_emulator(void)
                 ImGui::PopItemWidth();
 
                 ImGui::Separator();
-                if (emu_get_core()->GetMedia()->IsValidBios(true))
+                if (media->IsSyscardBiosValid())
                 {
-                    ImGui::TextColored(ImVec4(0.10f, 0.90f, 0.10f, 1.0f), "Valid BIOS: %s", emu_get_core()->GetMedia()->GetBiosName(true));
+                    ImGui::TextColored(service_mcp_http_color, "Valid BIOS: %s", media->GetBiosName(true));
+                }
+                else if (media->IsSyscardBiosLoaded())
+                {
+                    ImGui::TextColored(service_turbolink_color, "Custom or unknown BIOS loaded.");
+                    ImGui::TextColored(service_turbolink_color, "CRC not found in BIOS database.");
                 }
                 else
                 {
-                    ImGui::TextColored(ImVec4(0.98f, 0.15f, 0.45f, 1.0f), "System Card BIOS not loaded or invalid!");
-                    ImGui::TextColored(ImVec4(0.98f, 0.15f, 0.45f, 1.0f), "System Card 3.0 recommended for most games.");
+                    ImGui::TextDisabled("System Card BIOS not loaded!");
+                    ImGui::TextDisabled("System Card 3.0 recommended for most games.");
                 }
 
                 ImGui::EndMenu();
@@ -538,13 +585,18 @@ static void menu_emulator(void)
                 ImGui::PopItemWidth();
 
                 ImGui::Separator();
-                if (emu_get_core()->GetMedia()->IsValidBios(false))
+                if (media->IsGameExpressBiosValid())
                 {
-                    ImGui::TextColored(ImVec4(0.10f, 0.90f, 0.10f, 1.0f), "Valid BIOS: %s", emu_get_core()->GetMedia()->GetBiosName(false));
+                    ImGui::TextColored(service_mcp_http_color, "Valid BIOS: %s", media->GetBiosName(false));
+                }
+                else if (media->IsGameExpressBiosLoaded())
+                {
+                    ImGui::TextColored(service_turbolink_color, "Custom or unknown BIOS loaded.");
+                    ImGui::TextColored(service_turbolink_color, "CRC not found in BIOS database.");
                 }
                 else
                 {
-                    ImGui::TextColored(ImVec4(0.98f, 0.15f, 0.45f, 1.0f), "Game Express BIOS not loaded or invalid!");
+                    ImGui::TextDisabled("Game Express BIOS not loaded!");
                 }
 
                 ImGui::EndMenu();
@@ -585,7 +637,9 @@ static void menu_emulator(void)
             if (ImGui::IsItemHovered())
             {
                 ImGui::BeginTooltip();
-                ImGui::Text("It is recommended to leave this option on Auto.");
+                ImGui::Text("Auto enables CD-ROM hardware only for CD media.");
+                ImGui::Text("Selecting a model also enables CD-ROM hardware for HuCards.");
+                ImGui::Text("HuCards keep their own ROM and cartridge RAM mapping.");
                 ImGui::Text("Reset the emulator to apply changes.");
                 ImGui::EndTooltip();
             }
@@ -639,7 +693,7 @@ static void menu_emulator(void)
 
         ImGui::Separator();
 
-        if (ImGui::BeginMenu("Memory Base 128"))
+        if (ImGui::BeginMenu("Memory Base 128", !emu_turbolink_is_active()))
         {
             ImGui::PushItemWidth(100.0f);
             if (ImGui::Combo("##mb128_backup", &config_emulator.mb128_mode, "Auto\0Enabled\0Disabled\0\0"))
@@ -660,6 +714,13 @@ static void menu_emulator(void)
 
         ImGui::MenuItem("Start Paused", "", &config_emulator.start_paused);
         ImGui::MenuItem("Pause When Inactive", "", &config_emulator.pause_when_inactive);
+        if (ImGui::MenuItem("Allow Screen Saver", "", &config_emulator.allow_screensaver))
+        {
+            if (config_emulator.allow_screensaver)
+                SDL_EnableScreenSaver();
+            else
+                SDL_DisableScreenSaver();
+        }
 
         ImGui::Separator();
 
@@ -772,7 +833,7 @@ static void menu_video(void)
             ImGui::PushItemWidth(250.0f);
             ImGui::Combo("##scale", &config_video.scale, "Integer Scale (Auto)\0Integer Scale (Manual)\0Scale to Window Height\0Scale to Window Width & Height\0\0");
             if (config_video.scale == 1)
-                ImGui::SliderInt("##scale_manual", &config_video.scale_manual, 1, 16);
+                ImGui::SliderInt("##scale_manual", &config_video.scale_manual, 1, 20);
             ImGui::PopItemWidth();
             ImGui::EndMenu();
         }
@@ -846,16 +907,40 @@ static void menu_video(void)
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Vertical Sync", "", &config_video.sync))
+        if (ImGui::BeginMenu("Vertical Sync"))
         {
-            display_set_vsync(config_video.sync);
-
-            if (config_video.sync)
+#if defined(_WIN32)
+            ImGui::PushItemWidth(220.0f);
+            if (ImGui::Combo("##sync_mode", &config_video.sync_mode, "Disabled\0Fixed Vertical Sync\0Variable Refresh Rate (VRR)\0\0"))
+#else
+            ImGui::PushItemWidth(100.0f);
+            if (ImGui::Combo("##sync_mode", &config_video.sync_mode, "Disabled\0Enabled\0\0"))
+#endif
             {
-                config_audio.sync = true;
-                config_emulator.ffwd = false;
-                emu_audio_reset();
+                if (config_video.sync_mode != config_VideoSync_Disabled)
+                {
+                    config_audio.sync = true;
+                    config_emulator.ffwd = false;
+                    emu_audio_reset();
+                }
+
+                display_use_vsync_if_enabled();
             }
+            ImGui::PopItemWidth();
+
+#if defined(_WIN32)
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("Disabled: do not synchronize presentation to the monitor.");
+                ImGui::Text("Fixed Vertical Sync: use normal VSync.");
+                ImGui::Text("VRR: present at the emulator frame rate.");
+                ImGui::Text("\nVRR requires fullscreen, a VRR display, and G-SYNC,");
+                ImGui::Text("FreeSync, or Adaptive Sync enabled in your monitor and GPU driver settings.");
+                ImGui::EndTooltip();
+            }
+#endif
+            ImGui::EndMenu();
         }
 
         ImGui::MenuItem("Show FPS", "", &config_video.fps);
@@ -865,7 +950,7 @@ static void menu_video(void)
         if (ImGui::BeginMenu("Color Palette"))
         {
             ImGui::PushItemWidth(180.0f);
-            if (ImGui::Combo("##palette", &config_video.palette, "Standard RGB\0Composite RGB\0Custom\0\0"))
+            if (ImGui::Combo("##palette", &config_video.palette, "Standard RGB\0Turboxray\0Kitrinx\0Custom\0\0"))
             {
                 emu_set_palette(config_video.palette);
             }
@@ -964,25 +1049,50 @@ static void menu_video(void)
 
         ImGui::Separator();
 
+        if (ImGui::BeginMenu("Theme"))
+        {
+            ImGui::PushItemWidth(100.0f);
+            if (ImGui::Combo("##theme", &config_emulator.theme, "Light\0Dark\0\0"))
+            {
+                gui_set_style();
+            }
+            ImGui::PopItemWidth();
+            ImGui::EndMenu();
+        }
+
         if (ImGui::BeginMenu("Background Color"))
         {
-            ImGui::ColorEdit3("##normal_bg", config_video.background_color, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_Float);
-            ImGui::SameLine();
-            ImGui::Text("Normal Background");
-
-            ImGui::Separator();
-
-            if (ImGui::ColorEdit3("##debugger_bg", config_video.background_color_debugger, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_Float))
-            {
-                ImGuiStyle& style = ImGui::GetStyle();
-                style.Colors[ImGuiCol_DockingEmptyBg] = ImVec4(config_video.background_color_debugger[0], config_video.background_color_debugger[1], config_video.background_color_debugger[2], 1.0f);
-            }
-            ImGui::SameLine();
-            ImGui::Text("Debugger Background");
+            draw_background_color_menu("Dark Theme", config_Theme_Dark);
+            draw_background_color_menu("Light Theme", config_Theme_Light);
 
             ImGui::EndMenu();
         }
 
+        ImGui::EndMenu();
+    }
+}
+
+static void draw_background_color_menu(const char* label, int theme)
+{
+    if (ImGui::BeginMenu(label))
+    {
+        ImGui::PushID(theme);
+
+        ImGui::ColorEdit3("##normal_bg", config_video.background_color[theme], ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_Float);
+        ImGui::SameLine();
+        ImGui::Text("Normal Background");
+
+        ImGui::Separator();
+
+        if (ImGui::ColorEdit3("##debugger_bg", config_video.background_color_debugger[theme], ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_Float))
+        {
+            if (config_emulator.theme == theme)
+                gui_set_style();
+        }
+        ImGui::SameLine();
+        ImGui::Text("Debugger Background");
+
+        ImGui::PopID();
         ImGui::EndMenu();
     }
 }
@@ -1191,7 +1301,7 @@ static void menu_input(void)
         gui_in_use = true;
 
 
-        if (ImGui::BeginMenu("Controller"))
+        if (ImGui::BeginMenu("Controller", !emu_turbolink_is_active()))
         {
             for (int i = 0; i < GG_MAX_GAMEPADS; i++)
             {
@@ -1208,8 +1318,8 @@ static void menu_input(void)
                     if (ImGui::IsItemHovered())
                     {
                         ImGui::BeginTooltip();
-                        ImGui::Text("It is recommended to select Avenue Pad 6");
-                        ImGui::Text("only for games that support it.");
+                        ImGui::Text("Some games may not work properly with the Avenue Pad 6.");
+                        ImGui::Text("Select it only if you are sure the game supports it.");
                         ImGui::EndTooltip();
                     }
 
@@ -1233,6 +1343,7 @@ static void menu_input(void)
                             ImGui::BeginTooltip();
                             ImGui::Text("\"Auto\" will automatically choose SELECT or RUN");
                             ImGui::Text("depending on the game being played.");
+                            ImGui::Text("Games not in the database default to RUN.");
                             ImGui::EndTooltip();
                         }
                     }
@@ -1318,30 +1429,19 @@ static void menu_input(void)
 
                 if (ImGui::BeginMenu(keyboard_name))
                 {
-                    ImGui::TextDisabled("Keyboard %s", keyboard_name);
-                    ImGui::Separator();
-                    keyboard_configuration_item("Left:", &config_input_keyboard[i].key_left, i);
-                    keyboard_configuration_item("Right:", &config_input_keyboard[i].key_right, i);
-                    keyboard_configuration_item("Up:", &config_input_keyboard[i].key_up, i);
-                    keyboard_configuration_item("Down:", &config_input_keyboard[i].key_down, i);
-                    keyboard_configuration_item("Select:", &config_input_keyboard[i].key_select, i);
-                    keyboard_configuration_item("Run:", &config_input_keyboard[i].key_run, i);
-                    keyboard_configuration_item("I:", &config_input_keyboard[i].key_I, i);
-                    keyboard_configuration_item("II:", &config_input_keyboard[i].key_II, i);
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Avenue Pad 3/6:");
-                    keyboard_configuration_item("III:", &config_input_keyboard[i].key_III, i);
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Avenue Pad 6:");
-                    keyboard_configuration_item("IV:", &config_input_keyboard[i].key_IV, i);
-                    keyboard_configuration_item("V:", &config_input_keyboard[i].key_V, i);
-                    keyboard_configuration_item("VI:", &config_input_keyboard[i].key_VI, i);
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Turbo:");
-                    keyboard_configuration_item("Toggle Turbo I:", &config_input_keyboard[i].key_toggle_turbo_I, i);
-                    keyboard_configuration_item("Toggle Turbo II:", &config_input_keyboard[i].key_toggle_turbo_II, i);
+                    for (int profile = 0; profile < config_InputProfile_COUNT; profile++)
+                    {
+                        char profile_label[64];
+                        bool active = active_input_profile(i) == profile;
+                        snprintf(profile_label, sizeof(profile_label), "%s%s", input_profile_name((config_InputProfile)profile), active ? " (active)" : "");
 
-                    gui_popup_modal_keyboard();
+                        if (ImGui::BeginMenu(profile_label))
+                        {
+                            keyboard_profile_menu(i, (config_InputProfile)profile);
+                            gui_popup_modal_keyboard();
+                            ImGui::EndMenu();
+                        }
+                    }
 
                     ImGui::EndMenu();
                 }
@@ -1383,36 +1483,21 @@ static void menu_input(void)
                         ImGui::EndMenu();
                     }
 
-                    if (ImGui::BeginMenu("Directional Controls"))
+                    ImGui::Separator();
+
+                    for (int profile = 0; profile < config_InputProfile_COUNT; profile++)
                     {
-                        ImGui::PushItemWidth(150.0f);
-                        ImGui::Combo("##directional", &config_input_gamepad[i].gamepad_directional, "D-pad\0Left Analog Stick\0\0");
-                        ImGui::PopItemWidth();
-                        ImGui::EndMenu();
-                    }
-
-                    if (ImGui::BeginMenu("Button Configuration"))
-                    {
-                        ImGui::TextDisabled("Gamepad %s", gamepad_name);
-                        ImGui::Separator();
-                        gamepad_configuration_item("Select:", &config_input_gamepad[i].gamepad_select, i);
-                        gamepad_configuration_item("Run:", &config_input_gamepad[i].gamepad_run, i);
-                        gamepad_configuration_item("I:", &config_input_gamepad[i].gamepad_I, i);
-                        gamepad_configuration_item("II:", &config_input_gamepad[i].gamepad_II, i);
-                        ImGui::Separator();
-                        ImGui::TextDisabled("Avenue Pad%s:", config_input.controller_type[i] == 1 ? "" : " (disabled)");
-                        gamepad_configuration_item("III:", &config_input_gamepad[i].gamepad_III, i);
-                        gamepad_configuration_item("IV:", &config_input_gamepad[i].gamepad_IV, i);
-                        gamepad_configuration_item("V:", &config_input_gamepad[i].gamepad_V, i);
-                        gamepad_configuration_item("VI:", &config_input_gamepad[i].gamepad_VI, i);
-                        ImGui::Separator();
-                        ImGui::TextDisabled("Turbo:");
-                        gamepad_configuration_item("Toggle Turbo I:", &config_input_gamepad[i].gamepad_toggle_turbo_I, i);
-                        gamepad_configuration_item("Toggle Turbo II:", &config_input_gamepad[i].gamepad_toggle_turbo_II, i);
-
-                        gui_popup_modal_gamepad(i);
-
-                        ImGui::EndMenu();
+                        char profile_label[64];
+                        bool active = active_input_profile(i) == profile;
+                        snprintf(profile_label, sizeof(profile_label), "%s%s",
+                            input_profile_name((config_InputProfile)profile),
+                            active ? " (active)" : "");
+                        if (ImGui::BeginMenu(profile_label))
+                        {
+                            gamepad_profile_menu(i, (config_InputProfile)profile);
+                            gui_popup_modal_gamepad(i);
+                            ImGui::EndMenu();
+                        }
                     }
 
                     if (ImGui::BeginMenu("Shortcut Configuration"))
@@ -1454,13 +1539,14 @@ static void menu_input(void)
 
         ImGui::Separator();
 
-        if (ImGui::MenuItem("Enable Turbo Tap", "", &config_input.turbo_tap))
+        if (ImGui::MenuItem("Enable Turbo Tap", "", &config_input.turbo_tap, !emu_turbolink_is_active()))
         {
             emu_set_turbo_tap(config_input.turbo_tap);
         }
         if (ImGui::IsItemHovered())
         {
             ImGui::BeginTooltip();
+            ImGui::Text("Some games may not work properly with Turbo Tap enabled.");
             ImGui::Text("It is recommended to keep this option disabled if");
             ImGui::Text("you are using the emulator in single player only.");
             ImGui::EndTooltip();
@@ -1491,16 +1577,55 @@ static void menu_audio(void)
             emu_audio_mute(!config_audio.enable);
         }
 
-        if (ImGui::MenuItem("HuC6280A PSG", "", &config_audio.huc6280a))
+        ImGui::Separator();
+
+        if (ImGui::BeginMenu("PSG Revision"))
         {
-            emu_audio_huc6280a(config_audio.huc6280a);
+            ImGui::PushItemWidth(110.0f);
+            if (ImGui::Combo("##psg_revision", &config_audio.psg_revision, "Auto\0HuC6280\0HuC6280A\0\0"))
+            {
+                emu_audio_psg_revision(config_audio.psg_revision);
+            }
+            ImGui::PopItemWidth();
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("Auto uses HuC6280A for SuperGrafx and HuC6280 for all other systems.");
+                ImGui::Text("Explicit selections override automatic revision matching.");
+                ImGui::EndTooltip();
+            }
+            ImGui::EndMenu();
         }
-        if (ImGui::IsItemHovered())
+
+        if (ImGui::BeginMenu("ADPCM Clock Speed"))
         {
-            ImGui::BeginTooltip();
-            ImGui::Text("When enabled, this option will emulate the HuC6280A audio chip.");
-            ImGui::Text("This chip will reduce clicks and pops in the audio output.");
-            ImGui::EndTooltip();
+            ImGui::PushItemWidth(110.0f);
+            if (ImGui::Combo("##adpcm_clock_mode", &config_audio.adpcm_clock_mode, "Auto\0Manual\0\0"))
+            {
+                emu_audio_adpcm_clock_speed(config_audio.adpcm_clock_mode, config_audio.adpcm_clock_speed);
+            }
+            ImGui::PopItemWidth();
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("Leave on Auto (recommended).");
+                ImGui::Text("The original hardware's piezoelectric resonator varies between units.");
+                ImGui::Text("32100 Hz is the most common clock speed.");
+                ImGui::EndTooltip();
+            }
+
+            if (config_audio.adpcm_clock_mode == 1)
+            {
+                int clock_speed = (int)(config_audio.adpcm_clock_speed + 0.5f);
+                ImGui::PushItemWidth(200.0f);
+                if (ImGui::SliderInt("##adpcm_clock_speed", &clock_speed, 32000, 32200, "%d Hz", ImGuiSliderFlags_AlwaysClamp))
+                {
+                    config_audio.adpcm_clock_speed = (float)clock_speed;
+                    emu_audio_adpcm_clock_speed(config_audio.adpcm_clock_mode, config_audio.adpcm_clock_speed);
+                }
+                ImGui::PopItemWidth();
+            }
+            ImGui::EndMenu();
         }
 
         ImGui::Separator();
@@ -1604,12 +1729,12 @@ static void menu_audio(void)
             ImGui::PopItemWidth();
             if (ImGui::IsItemHovered())
             {
-                float latency_ms = (config_audio.buffer_count * GG_AUDIO_QUEUE_SIZE) / (float)(GG_AUDIO_SAMPLE_RATE * 2) * 1000.0f;
                 ImGui::BeginTooltip();
-                ImGui::Text("Lower values reduce audio latency.");
+                ImGui::Text("Audio latency: %.0f ms", sound_queue_get_target_latency_ms());
+                ImGui::Text("\nLower values reduce audio latency.");
                 ImGui::Text("Higher values prevent audio underruns.");
                 ImGui::Text("Enabling VSync may force higher buffer counts.");
-                ImGui::Text("Current audio latency: %.0f ms", latency_ms);
+
                 ImGui::EndTooltip();
             }
             ImGui::EndMenu();
@@ -1621,8 +1746,8 @@ static void menu_audio(void)
 
         //     if (!config_audio.sync)
         //     {
-        //         config_video.sync = false;
-        //         display_set_vsync(false);
+        //         config_video.sync_mode = config_VideoSync_Disabled;
+        //         display_disable_vsync();
         //     }
         // }
 
@@ -1694,7 +1819,10 @@ static void menu_debug(void)
 
             if (ImGui::MenuItem("Start HTTP Server", "", false, !mcp_running))
             {
-                emu_mcp_set_transport(1, config_emulator.mcp_tcp_port);
+                if (strlen(gui_mcp_http_address) == 0)
+                    strncpy_fit(gui_mcp_http_address, "127.0.0.1", sizeof(gui_mcp_http_address));
+                config_emulator.mcp_http_address = gui_mcp_http_address;
+                emu_mcp_set_transport(1, config_emulator.mcp_tcp_port, config_emulator.mcp_http_address.c_str());
                 emu_mcp_start();
             }
 
@@ -1706,13 +1834,20 @@ static void menu_debug(void)
             ImGui::Separator();
 
             if (stdio_running)
-                ImGui::TextColored(ImVec4(0.90f, 0.70f, 0.10f, 1.0f), "STDIO mode active");
+                ImGui::TextColored(service_mcp_stdio_color, "STDIO mode active");
             else if (http_running)
-                ImGui::TextColored(ImVec4(0.10f, 0.90f, 0.10f, 1.0f), "Listening on %d", config_emulator.mcp_tcp_port);
+                ImGui::TextColored(service_mcp_http_color, "Listening on %s:%d",
+                    emu_mcp_get_http_address(), emu_mcp_get_http_port());
             else
                 ImGui::TextColored(ImVec4(0.98f, 0.15f, 0.45f, 1.0f), "Stopped");
 
             ImGui::Separator();
+
+            ImGui::Text("HTTP Address:");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120);
+            if (ImGui::InputText("##mcp_address", gui_mcp_http_address, IM_ARRAYSIZE(gui_mcp_http_address), ImGuiInputTextFlags_AutoSelectAll))
+                config_emulator.mcp_http_address = gui_mcp_http_address;
 
             ImGui::Text("HTTP Port:");
             ImGui::SameLine();
@@ -1758,7 +1893,7 @@ static void menu_debug(void)
                 ImGui::EndMenu();
             }
 
-            if (ImGui::BeginMenu("WRAM & CD-ROM RAM"))
+            if (ImGui::BeginMenu("SYSTEM RAM & CD-ROM RAM"))
             {
                 ImGui::PushItemWidth(100.0f);
                 if (ImGui::Combo("##init_ram", &config_debug.reset_ram, "Random\0 0x00\0 0xFF\0\0"))
@@ -1893,9 +2028,10 @@ static void menu_debug(void)
             }
         }
 
-        if (ImGui::BeginMenu("CD-ROM", config_debug.debug && emu_get_core()->GetMedia()->IsCDROM()))
+        if (ImGui::BeginMenu("CD-ROM", config_debug.debug && emu_get_core()->GetMedia()->IsCDROMHardwareEnabled()))
         {
             ImGui::MenuItem("Show Status", "", &config_debug.show_cdrom);
+            ImGui::MenuItem("Show TOC", "", &config_debug.show_cdrom_toc, emu_get_core()->GetMedia()->IsCDROM());
             ImGui::MenuItem("Show Arcade Card", "", &config_debug.show_arcade_card, emu_get_core()->GetMedia()->IsArcadeCard());
             ImGui::Separator();
             ImGui::MenuItem("Show CD-ROM Audio", "", &config_debug.show_cdrom_audio);
@@ -1910,6 +2046,13 @@ static void menu_debug(void)
         }
 
         ImGui::Separator();
+
+        ImGui::MenuItem("Show TurboLink", "", &config_debug.show_turbolink,
+            config_debug.debug);
+        ImGui::MenuItem("Show TurboLink Transport", "",
+            &config_debug.show_turbolink_transport, config_debug.debug);
+
+            ImGui::Separator();
 
         ImGui::MenuItem("Show Rewind", "", &config_debug.show_rewind, config_debug.debug);
 
@@ -1958,31 +2101,166 @@ static void menu_about(void)
     }
 }
 
+static void menu_turbolink(void)
+{
+    if (!ImGui::BeginMenu("TurboLink"))
+        return;
+
+    gui_in_use = true;
+    TurboLinkStatus status = emu_turbolink_get_status();
+    bool active = emu_turbolink_is_active();
+    const ImVec4 error_red(0.98f, 0.15f, 0.45f, 1.0f);
+
+#if defined(__APPLE__)
+    if (ImGui::MenuItem("New " GG_TITLE " Window", "", false, application_can_launch_new_instance()))
+    {
+        application_launch_new_instance();
+    }
+    ImGui::Separator();
+#endif
+
+    if (ImGui::MenuItem("Connect", NULL, false, !active))
+        emu_turbolink_connect(config_emulator.turbolink_session);
+    if (ImGui::MenuItem("Disconnect", NULL, false, active || status.mode != TurboLinkModeDisabled))
+    {
+        emu_turbolink_stop();
+    }
+
+    ImGui::Separator();
+
+    switch (status.mode)
+    {
+        case TurboLinkModeConnected:
+            ImGui::TextColored(service_turbolink_color, "%s", status.endpoint);
+            ImGui::TextDisabled("Peer %d of %d", status.local_peer_id, status.peer_count);
+
+            if (!status.local_hardware_ready)
+                ImGui::TextDisabled("Local TurboLink hardware inactive");
+            else if (!status.remote_hardware_ready)
+                ImGui::TextDisabled("Waiting for remote hardware");
+            else
+            {
+                ImGui::TextDisabled("TurboLink hardware connected");
+                ImGui::TextDisabled("%s", status.pacing_peer ? "Pacing peer" : "Following peer");
+            }
+            break;
+        case TurboLinkModeFault:
+            ImGui::TextColored(error_red, "%s", status.last_error);
+            break;
+        default:
+            ImGui::TextColored(error_red, "Disconnected");
+            break;
+    }
+
+    ImGui::Separator();
+    ImGui::BeginDisabled(active);
+    ImGui::Text("Session:");
+    ImGui::SameLine(110.0f);
+    ImGui::SetNextItemWidth(60.0f);
+
+    if (ImGui::InputInt("##turbolink_session", &config_emulator.turbolink_session, 0, 0))
+    {
+        config_emulator.turbolink_session = CLAMP(config_emulator.turbolink_session, 1, 255);
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Separator();
+
+#if defined(_WIN32)
+    const int stall_min = 1000;
+    const int stall_max = 10000;
+    const int stall_step = 250;
+    const int stall_default = 5000;
+#elif defined(__APPLE__)
+    const int stall_min = 50;
+    const int stall_max = 1000;
+    const int stall_step = 50;
+    const int stall_default = 100;
+#else
+    const int stall_min = 50;
+    const int stall_max = 2000;
+    const int stall_step = 50;
+    const int stall_default = 250;
+#endif
+
+    if (ImGui::BeginMenu("Stall Threshold"))
+    {
+        ImGui::PushItemWidth(180.0f);
+        if (SliderIntWithSteps("##turbolink_stall", &config_emulator.turbolink_stall_us, stall_min, stall_max, stall_step, "%d us"))
+        {
+            emu_turbolink_set_normal_barrier_stall_us((u32)config_emulator.turbolink_stall_us);
+        }
+        ImGui::PopItemWidth();
+
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::Text("Lower values reduce CPU usage but may cause stalls.");
+            ImGui::Text("Higher values tolerate scheduling delays but use more CPU.");
+            ImGui::NewLine();
+            ImGui::Text("Recommended: %d us", stall_default);
+            ImGui::EndTooltip();
+        }
+        ImGui::EndMenu();
+    }
+
+    ImGui::EndMenu();
+}
+
 static void draw_mcp_status(void)
 {
-    if (!emu_mcp_is_running())
+    bool mcp_running = emu_mcp_is_running();
+    TurboLinkStatus turbolink = emu_turbolink_get_status();
+    bool turbolink_active = turbolink.mode == TurboLinkModeConnected;
+
+    if (!mcp_running && !turbolink_active)
         return;
 
-    char status[64];
-    ImVec4 color(0.10f, 0.90f, 0.10f, 1.0f);
+    char turbolink_status[64];
+    char mcp_status[128];
+    bool show_turbolink = false;
+    bool show_mcp = false;
+    ImVec4 mcp_color = service_mcp_http_color;
 
-    int transport_mode = emu_mcp_get_transport_mode();
-    if (transport_mode == 0)
+    if (turbolink_active)
     {
-        snprintf(status, sizeof(status), "MCP: STDIO");
-        color = ImVec4(0.90f, 0.70f, 0.10f, 1.0f);
+        snprintf(turbolink_status, sizeof(turbolink_status),
+            "TURBOLINK: S%u P%d/%d", turbolink.session,
+            turbolink.local_peer_id, turbolink.peer_count);
+        show_turbolink = true;
     }
-    else if (transport_mode == 1)
+
+    if (mcp_running)
     {
-        snprintf(status, sizeof(status), "MCP: HTTP (%d)", config_emulator.mcp_tcp_port);
-    }
-    else
-    {
-        return;
+        int transport_mode = emu_mcp_get_transport_mode();
+        if (transport_mode == 0)
+        {
+            snprintf(mcp_status, sizeof(mcp_status), "MCP: STDIO");
+            mcp_color = service_mcp_stdio_color;
+            show_mcp = true;
+        }
+        else if (transport_mode == 1)
+        {
+            snprintf(mcp_status, sizeof(mcp_status), "MCP: HTTP (%s:%d)",
+                config_emulator.mcp_http_address.c_str(),
+                config_emulator.mcp_tcp_port);
+            show_mcp = true;
+        }
     }
 
     ImGuiStyle& style = ImGui::GetStyle();
-    float text_width = ImGui::CalcTextSize(status).x;
+    float spacing = style.ItemSpacing.x * 2.0f;
+    float text_width = 0.0f;
+
+    if (show_turbolink)
+        text_width += ImGui::CalcTextSize(turbolink_status).x;
+    if (show_mcp)
+    {
+        if (text_width > 0.0f)
+            text_width += spacing;
+        text_width += ImGui::CalcTextSize(mcp_status).x;
+    }
+
     float status_x = ImGui::GetWindowWidth() - text_width - style.ItemSpacing.x - 10.0f;
     float cursor_x = ImGui::GetCursorPosX();
 
@@ -1991,7 +2269,17 @@ static void draw_mcp_status(void)
 
     ImGui::SameLine(status_x);
     ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(color, "%s", status);
+
+    if (show_turbolink)
+        ImGui::TextColored(service_turbolink_color, "%s", turbolink_status);
+
+    if (show_mcp)
+    {
+        if (show_turbolink)
+            ImGui::SameLine(0.0f, spacing);
+
+        ImGui::TextColored(mcp_color, "%s", mcp_status);
+    }
 }
 
 static void file_dialogs(void)
@@ -2067,28 +2355,217 @@ static const char* get_current_media_directory_text(void)
     return emu_get_core()->GetMedia()->GetFileDirectory();
 }
 
-static void keyboard_configuration_item(const char* text, SDL_Scancode* key, int player)
+static const char* input_profile_name(config_InputProfile profile)
 {
-    ImGui::Text("%s", text);
-    ImGui::SameLine(120);
-
-    char button_label[256];
-    snprintf(button_label, 256, "%s##%s%d", SDL_GetKeyName(SDL_GetKeyFromScancode(*key, SDL_KMOD_NONE, false)), text, player);
-
-    if (ImGui::Button(button_label, ImVec2(90,0)))
+    static const char* names[config_InputProfile_COUNT] =
     {
-        gui_configured_key = key;
-        ImGui::OpenPopup("Keyboard Configuration");
+        "2-button Pad", "3-button Pad", "6-button Pad"
+    };
+    return names[profile];
+}
+
+static config_InputProfile active_input_profile(int player)
+{
+    if (config_input.controller_type[player] == GG_CONTROLLER_AVENUE_PAD_3)
+        return config_InputProfile_3Button;
+    if (config_input.controller_type[player] == GG_CONTROLLER_AVENUE_PAD_6)
+        return config_InputProfile_6Button;
+    return config_InputProfile_2Button;
+}
+
+static GG_Keys resolved_avenue_pad_3_button(int player, bool automatic_only)
+{
+    if (!automatic_only)
+    {
+        if (config_input.avenue_pad_3_button[player] == 1)
+            return GG_KEY_SELECT;
+        if (config_input.avenue_pad_3_button[player] == 2)
+            return GG_KEY_RUN;
     }
 
-    ImGui::SameLine();
+    if (!emu_is_empty())
+        return emu_get_core()->GetMedia()->GetAvenuePad3Button();
 
-    char remove_label[256];
-    snprintf(remove_label, sizeof(remove_label), "X##rk%s%d", text, player);
+    return GG_KEY_RUN;
+}
 
-    if (ImGui::Button(remove_label))
+static void keyboard_profile_menu(int player, config_InputProfile profile)
+{
+    config_Input_Keyboard* primary = &config_input_keyboard[player][profile][0];
+    config_Input_Keyboard* secondary = &config_input_keyboard[player][profile][1];
+    ImGui::TextDisabled(" ");
+    ImGui::SameLine(150.0f);
+    ImGui::TextDisabled("Primary");
+    ImGui::SameLine(280.0f);
+    ImGui::TextDisabled("Secondary");
+    ImGui::Separator();
+
+    keyboard_bindings_configuration_item("Left:", &primary->key_left, &secondary->key_left, player, profile);
+    keyboard_bindings_configuration_item("Right:", &primary->key_right, &secondary->key_right, player, profile);
+    keyboard_bindings_configuration_item("Up:", &primary->key_up, &secondary->key_up, player, profile);
+    keyboard_bindings_configuration_item("Down:", &primary->key_down, &secondary->key_down, player, profile);
+
+    ImGui::Separator();
+    keyboard_bindings_configuration_item("Select:", &primary->key_select, &secondary->key_select, player, profile);
+    keyboard_bindings_configuration_item("Run:", &primary->key_run, &secondary->key_run, player, profile);
+    keyboard_bindings_configuration_item("I:", &primary->key_I, &secondary->key_I, player, profile);
+    keyboard_bindings_configuration_item("II:", &primary->key_II, &secondary->key_II, player, profile);
+
+    if (profile == config_InputProfile_3Button)
     {
-        *key = SDL_SCANCODE_UNKNOWN;
+        GG_Keys preferred = resolved_avenue_pad_3_button(player, false);
+        const char* preferred_name = preferred == GG_KEY_SELECT ? "SELECT" : "RUN";
+        const char* alternate_name = preferred == GG_KEY_SELECT ? "RUN" : "SELECT";
+        char preferred_label[48];
+        char alternate_label[48];
+        snprintf(preferred_label, sizeof(preferred_label), "III (%s):", preferred_name);
+        snprintf(alternate_label, sizeof(alternate_label), "Alternate (%s):", alternate_name);
+        keyboard_bindings_configuration_item(preferred_label, &primary->key_III, &secondary->key_III, player, profile);
+        keyboard_bindings_configuration_item(alternate_label, &primary->key_IV, &secondary->key_IV, player, profile);
+    }
+    else if (profile == config_InputProfile_6Button)
+    {
+        keyboard_bindings_configuration_item("III:", &primary->key_III, &secondary->key_III, player, profile);
+        keyboard_bindings_configuration_item("IV:", &primary->key_IV, &secondary->key_IV, player, profile);
+        keyboard_bindings_configuration_item("V:", &primary->key_V, &secondary->key_V, player, profile);
+        keyboard_bindings_configuration_item("VI:", &primary->key_VI, &secondary->key_VI, player, profile);
+    }
+
+    ImGui::Separator();
+    keyboard_bindings_configuration_item("Toggle Turbo I:", &primary->key_toggle_turbo_I, &secondary->key_toggle_turbo_I, player, profile);
+    keyboard_bindings_configuration_item("Toggle Turbo II:", &primary->key_toggle_turbo_II, &secondary->key_toggle_turbo_II, player, profile);
+}
+
+static void gamepad_profile_menu(int player, config_InputProfile profile)
+{
+    config_Input_Gamepad* primary = &config_input_gamepad[player][profile][0];
+    config_Input_Gamepad* secondary = &config_input_gamepad[player][profile][1];
+
+    ImGui::TextDisabled(" ");
+    ImGui::SameLine(150.0f);
+    ImGui::TextDisabled("Primary");
+    ImGui::SameLine(260.0f);
+    ImGui::TextDisabled("Secondary");
+    ImGui::Separator();
+
+    gamepad_bindings_configuration_item("Select:", &primary->gamepad_select, &secondary->gamepad_select, player, profile);
+    gamepad_bindings_configuration_item("Run:", &primary->gamepad_run, &secondary->gamepad_run, player, profile);
+    gamepad_bindings_configuration_item("I:", &primary->gamepad_I, &secondary->gamepad_I, player, profile);
+    gamepad_bindings_configuration_item("II:", &primary->gamepad_II, &secondary->gamepad_II, player, profile);
+
+    if (profile == config_InputProfile_3Button)
+    {
+        GG_Keys preferred = resolved_avenue_pad_3_button(player, false);
+        const char* preferred_name = preferred == GG_KEY_SELECT ? "SELECT" : "RUN";
+        const char* alternate_name = preferred == GG_KEY_SELECT ? "RUN" : "SELECT";
+        char preferred_label[48];
+        char alternate_label[48];
+        snprintf(preferred_label, sizeof(preferred_label), "III (%s):", preferred_name);
+        snprintf(alternate_label, sizeof(alternate_label), "Alternate (%s):", alternate_name);
+        gamepad_bindings_configuration_item(preferred_label, &primary->gamepad_III, &secondary->gamepad_III, player, profile);
+        gamepad_bindings_configuration_item(alternate_label, &primary->gamepad_IV, &secondary->gamepad_IV, player, profile);
+    }
+    else if (profile == config_InputProfile_6Button)
+    {
+        gamepad_bindings_configuration_item("III:", &primary->gamepad_III, &secondary->gamepad_III, player, profile);
+        gamepad_bindings_configuration_item("IV:", &primary->gamepad_IV, &secondary->gamepad_IV, player, profile);
+        gamepad_bindings_configuration_item("V:", &primary->gamepad_V, &secondary->gamepad_V, player, profile);
+        gamepad_bindings_configuration_item("VI:", &primary->gamepad_VI, &secondary->gamepad_VI, player, profile);
+    }
+
+    ImGui::Separator();
+    gamepad_bindings_configuration_item("Toggle Turbo I:", &primary->gamepad_toggle_turbo_I, &secondary->gamepad_toggle_turbo_I, player, profile);
+    gamepad_bindings_configuration_item("Toggle Turbo II:", &primary->gamepad_toggle_turbo_II, &secondary->gamepad_toggle_turbo_II, player, profile);
+
+    ImGui::Separator();
+
+    ImGui::Text("D-pad:");
+    ImGui::SameLine(150.0f);
+    
+    ImGui::PushItemWidth(180.0f);
+    ImGui::Combo("##directional", &primary->gamepad_directional,
+        "D-pad\0Left Analog Stick\0\0");
+    ImGui::PopItemWidth();
+}
+
+static void keyboard_bindings_configuration_item(const char* text,
+    SDL_Scancode* primary, SDL_Scancode* secondary, int player, config_InputProfile profile)
+{
+    SDL_Scancode* keys[config_InputBindingCount] = { primary, secondary };
+    ImGui::Text("%s", text);
+
+    for (int binding = 0; binding < config_InputBindingCount; binding++)
+    {
+        ImGui::SameLine(binding == 0 ? 150.0f : 280.0f);
+        const char* key_name = SDL_GetKeyName(SDL_GetKeyFromScancode(*keys[binding], SDL_KMOD_NONE, false));
+
+        if (!key_name || key_name[0] == 0)
+            key_name = "<None>";
+
+        char button_label[128];
+        snprintf(button_label, sizeof(button_label), "%s##kb%s_%d_%d_%d", key_name, text, player, profile, binding);
+
+        if (ImGui::Button(button_label, ImVec2(90.0f, 0.0f)))
+        {
+            gui_configured_key = keys[binding];
+            ImGui::OpenPopup("Keyboard Configuration");
+        }
+
+        ImGui::SameLine();
+        char remove_label[128];
+        snprintf(remove_label, sizeof(remove_label), "X##rkb%s_%d_%d_%d", text, player, profile, binding);
+
+        if (ImGui::Button(remove_label))
+            *keys[binding] = SDL_SCANCODE_UNKNOWN;
+    }
+}
+
+static const char* gamepad_button_name(int button)
+{
+    if (button == SDL_GAMEPAD_BUTTON_INVALID)
+        return "<None>";
+    if (button >= 0 && button < SDL_GAMEPAD_BUTTON_COUNT)
+    {
+        static const char* names[SDL_GAMEPAD_BUTTON_COUNT] =
+        {
+            "A", "B", "X", "Y", "BACK", "GUIDE", "START", "L3", "R3", "L1", "R1",
+            "UP", "DOWN", "LEFT", "RIGHT", "MISC", "PAD1", "PAD2", "PAD3", "PAD4",
+            "TOUCH"
+        };
+        return names[button];
+    }
+    if (button == GAMEPAD_VBTN_L2)
+        return "L2";
+    if (button == GAMEPAD_VBTN_R2)
+        return "R2";
+    return "??";
+}
+
+static void gamepad_bindings_configuration_item(const char* text, int* primary, int* secondary, int player, config_InputProfile profile)
+{
+    int* buttons[config_InputBindingCount] = { primary, secondary };
+    ImGui::Text("%s", text);
+
+    for (int binding = 0; binding < config_InputBindingCount; binding++)
+    {
+        ImGui::SameLine(binding == 0 ? 150.0f : 260.0f);
+        char button_label[128];
+
+        snprintf(button_label, sizeof(button_label), "%s##gp%s_%d_%d_%d",
+            gamepad_button_name(*buttons[binding]), text, player, profile, binding);
+
+        if (ImGui::Button(button_label, ImVec2(70.0f, 0.0f)))
+        {
+            gui_configured_button = buttons[binding];
+            ImGui::OpenPopup("Gamepad Configuration");
+        }
+
+        ImGui::SameLine();
+        char remove_label[128];
+        snprintf(remove_label, sizeof(remove_label), "X##rgp%s_%d_%d_%d", text, player, profile, binding);
+
+        if (ImGui::Button(remove_label))
+            *buttons[binding] = SDL_GAMEPAD_BUTTON_INVALID;
     }
 }
 
@@ -2097,30 +2574,8 @@ static void gamepad_configuration_item(const char* text, int* button, int player
     ImGui::Text("%s", text);
     ImGui::SameLine(130);
 
-    const char* button_name = "";
-
-    if (*button == SDL_GAMEPAD_BUTTON_INVALID)
-    {
-        button_name = "";
-    }
-    else if (*button >= 0 && *button < SDL_GAMEPAD_BUTTON_COUNT)
-    {
-        static const char* gamepad_names[21] = {"A", "B", "X" ,"Y", "BACK", "GUIDE", "START", "L3", "R3", "L1", "R1", "UP", "DOWN", "LEFT", "RIGHT", "MISC", "PAD1", "PAD2", "PAD3", "PAD4", "TOUCH"};
-        button_name = gamepad_names[*button];
-    }
-    else if (*button >= GAMEPAD_VBTN_AXIS_BASE)
-    {
-        int axis = *button - GAMEPAD_VBTN_AXIS_BASE;
-        if (axis == SDL_GAMEPAD_AXIS_LEFT_TRIGGER)
-            button_name = "L2";
-        else if (axis == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)
-            button_name = "R2";
-        else
-            button_name = "??";
-    }
-
     char button_label[256];
-    snprintf(button_label, sizeof(button_label), "%s##%s%d", button_name, text, player);
+    snprintf(button_label, sizeof(button_label), "%s##%s%d", gamepad_button_name(*button), text, player);
 
     if (ImGui::Button(button_label, ImVec2(70,0)))
     {

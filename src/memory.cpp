@@ -28,8 +28,10 @@
 #include "cdrom.h"
 #include "sf2_mapper.h"
 #include "arcade_card_mapper.h"
+#include "random.h"
+#include "trace_logger.h"
 
-Memory::Memory(HuC6260* huc6260, HuC6202* huc6202, HuC6280* huc6280, Media* media, Input* input, Audio* audio, CdRom* cdrom)
+Memory::Memory(HuC6260* huc6260, HuC6202* huc6202, HuC6280* huc6280, Media* media, Input* input, Audio* audio, CdRom* cdrom, Random* random)
 {
     m_huc6260 = huc6260;
     m_huc6202 = huc6202;
@@ -38,6 +40,8 @@ Memory::Memory(HuC6260* huc6260, HuC6202* huc6202, HuC6280* huc6280, Media* medi
     m_input = input;
     m_audio = audio;
     m_cdrom = cdrom;
+    m_random = random;
+    InitPointer(m_trace_logger);
     InitPointer(m_disassembler);
     InitPointer(m_test_memory);
     InitPointer(m_current_mapper);
@@ -103,7 +107,7 @@ void Memory::Reset()
         {
             do
             {
-                m_mpr[i] = rand() & 0xFF;
+                m_mpr[i] = m_random->Next8Bit();
             }
             while (m_mpr[i] == 0x00);
         }
@@ -114,14 +118,14 @@ void Memory::Reset()
     for (int i = 0; i < 0x8000; i++)
     {
         if (m_wram_reset_value < 0)
-            m_wram[i] = rand() & 0xFF;
+            m_wram[i] = m_random->Next8Bit();
         else
             m_wram[i] = m_wram_reset_value & 0xFF;
     }
 
 #if defined(GG_TESTING)
     for (int i = 0; i < 0x10000; i++)
-        m_test_memory[i] = rand() & 0xFF;
+        m_test_memory[i] = m_random->Next8Bit();
 #endif
 
     if (m_media->GetMapper() == Media::SF2_MAPPER)
@@ -137,12 +141,12 @@ void Memory::Reset()
     else
         m_current_mapper = NULL;
 
-    m_cdrom_ram_size = m_media->IsCDROM() ? 0x10000 : 0;
+    m_cdrom_ram_size = m_media->IsCDROMHardwareEnabled() ? 0x10000 : 0;
 
     for (u32 i = 0; i < m_cdrom_ram_size; i++)
     {
         if (m_wram_reset_value < 0)
-            m_cdrom_ram[i] = rand() & 0xFF;
+            m_cdrom_ram[i] = m_random->Next8Bit();
         else
             m_cdrom_ram[i] = m_wram_reset_value & 0xFF;
     }
@@ -168,7 +172,7 @@ void Memory::Reset()
     for (u32 i = 0; i < m_card_ram_size; i++)
     {
         if (m_card_ram_reset_value < 0)
-            m_card_ram[i] = rand() & 0xFF;
+            m_card_ram[i] = m_random->Next8Bit();
         else
             m_card_ram[i] = m_card_ram_reset_value & 0xFF;
     }
@@ -178,7 +182,7 @@ void Memory::Reset()
     for (u32 i = 0; i < 0x200000; i++)
     {
         if (m_arcade_card_reset_value < 0)
-            arcade_ram[i] = rand() & 0xFF;
+            arcade_ram[i] = m_random->Next8Bit();
         else
             arcade_ram[i] = m_arcade_card_reset_value & 0xFF;
     }
@@ -219,7 +223,7 @@ void Memory::ReloadMemoryMap()
     }
 
     // 0x80 - 0x87
-    if (m_media->IsCDROM())
+    if (m_media->IsCDROMHardwareEnabled())
         for (int i = 0x80; i <= 0x87; i++)
         {
             // CDROM RAM
@@ -286,9 +290,36 @@ void Memory::SetMprTAM(u8 bits, u8 value)
     {
         if ((bits & (0x01 << i)) != 0)
         {
+            TraceMprEvent(bits, (u8)i, value);
             m_mpr[i] = value;
         }
     }
+}
+
+void Memory::SetTraceLogger(TraceLogger* trace_logger)
+{
+    m_trace_logger = trace_logger;
+    m_sf2_mapper->SetTraceLogger(trace_logger);
+}
+
+void Memory::LogMprEvent(u8 bits, u8 index, u8 new_value)
+{
+#if !defined(GG_DISABLE_DISASSEMBLER)
+    GG_Trace_Entry entry = {};
+    entry.type = TRACE_SYSTEM;
+    entry.system.event = TRACE_SYSTEM_MPR_WRITE;
+    entry.system.index = index;
+    entry.system.mask = bits;
+    entry.system.old_value = m_mpr[index];
+    entry.system.new_value = new_value;
+    entry.system.address = (u16)index * 0x2000;
+    entry.system.physical = (u32)new_value * 0x2000;
+    m_trace_logger->TraceLog(entry);
+#else
+    UNUSED(bits);
+    UNUSED(index);
+    UNUSED(new_value);
+#endif
 }
 
 u8 Memory::GetMprTMA(u8 bits)
@@ -345,6 +376,9 @@ GG_Disassembler_Record* Memory::GetOrCreateDisassemblerRecord(u16 address)
         record->has_operand_address = false;
         record->operand_address = 0;
         record->operand_is_zp = false;
+        record->operand_bank = 0;
+        record->operand_offset = 0;
+        record->operand_length = 0;
         record->auto_symbol[0] = 0;
         m_disassembler[physical_address] = record;
     }
@@ -354,7 +388,7 @@ GG_Disassembler_Record* Memory::GetOrCreateDisassemblerRecord(u16 address)
 
 Memory::MemoryBankType Memory::GetBankType(u8 bank)
 {
-    if (m_media->IsCDROM() && bank >= 0x80 && bank <= 0x87)
+    if (m_media->IsCDROMHardwareEnabled() && bank >= 0x80 && bank <= 0x87)
         return MEMORY_BANK_TYPE_CDROM_RAM;
 
     if (bank == 0xF7 && m_backup_ram_enabled)
@@ -386,13 +420,22 @@ bool Memory::LoadRam(std::istream &file, s32 file_size)
 {
     Debug("Loading BRAM from file");
 
-    if (file_size <= 0 || file_size > static_cast<s32>(sizeof(m_backup_ram)))
+    if (file_size != 0x800)
     {
         Log("Invalid BRAM size: %d", file_size);
         return false;
     }
 
-    file.read(reinterpret_cast<char*> (m_backup_ram), sizeof(u8) * file_size);
+    u8 loaded_data[0x800];
+    file.read(reinterpret_cast<char*> (loaded_data), sizeof(loaded_data));
+
+    if (file.gcount() != sizeof(loaded_data))
+    {
+        Error("Failed to read complete BRAM");
+        return false;
+    }
+
+    memcpy(m_backup_ram, loaded_data, sizeof(loaded_data));
 
     return true;
 }
@@ -421,14 +464,27 @@ void Memory::LoadState(std::istream& stream)
     using namespace std;
     stream.read(reinterpret_cast<char*> (m_mpr), sizeof(m_mpr));
     stream.read(reinterpret_cast<char*> (m_wram), sizeof(u8) * 0x8000);
-    stream.read(reinterpret_cast<char*> (&m_cdrom_ram_size), sizeof(m_cdrom_ram_size));
-    if (m_cdrom_ram_size > sizeof(m_cdrom_ram))
-        m_cdrom_ram_size = sizeof(m_cdrom_ram);
-    stream.read(reinterpret_cast<char*> (m_cdrom_ram), sizeof(u8) * m_cdrom_ram_size);
-    stream.read(reinterpret_cast<char*> (&m_card_ram_size), sizeof(m_card_ram_size));
-    if (m_card_ram_size > sizeof(m_card_ram))
-        m_card_ram_size = sizeof(m_card_ram);
-    stream.read(reinterpret_cast<char*> (m_card_ram), sizeof(u8) * m_card_ram_size);
+
+    u32 serialized_cdrom_ram_size;
+    stream.read(reinterpret_cast<char*> (&serialized_cdrom_ram_size), sizeof(serialized_cdrom_ram_size));
+    u32 cdrom_ram_read_size = serialized_cdrom_ram_size;
+    if (cdrom_ram_read_size > sizeof(m_cdrom_ram))
+        cdrom_ram_read_size = sizeof(m_cdrom_ram);
+    m_cdrom_ram_size = cdrom_ram_read_size;
+    stream.read(reinterpret_cast<char*> (m_cdrom_ram), sizeof(u8) * cdrom_ram_read_size);
+    if (serialized_cdrom_ram_size > cdrom_ram_read_size)
+        stream.ignore(static_cast<streamsize>(serialized_cdrom_ram_size - cdrom_ram_read_size));
+
+    u32 serialized_card_ram_size;
+    stream.read(reinterpret_cast<char*> (&serialized_card_ram_size), sizeof(serialized_card_ram_size));
+    u32 card_ram_read_size = serialized_card_ram_size;
+    if (card_ram_read_size > sizeof(m_card_ram))
+        card_ram_read_size = sizeof(m_card_ram);
+    m_card_ram_size = card_ram_read_size;
+    stream.read(reinterpret_cast<char*> (m_card_ram), sizeof(u8) * card_ram_read_size);
+    if (serialized_card_ram_size > card_ram_read_size)
+        stream.ignore(static_cast<streamsize>(serialized_card_ram_size - card_ram_read_size));
+
     stream.read(reinterpret_cast<char*> (&m_card_ram_start), sizeof(m_card_ram_start));
     stream.read(reinterpret_cast<char*> (&m_card_ram_end), sizeof(m_card_ram_end));
     stream.read(reinterpret_cast<char*> (m_backup_ram), sizeof(u8) * 0x800);

@@ -259,18 +259,19 @@ struct retro_core_option_v2_definition option_defs_us[] = {
         "241"
     },
     {
-        "geargrafx_composite_colors",
-        "Composite Colors",
+        "geargrafx_palette",
+        "Color Palette",
         NULL,
-        "If enabled, the core will use composite colors instead of RGB colors.",
+        "Selects the color palette used by the video encoder.",
         NULL,
         "video",
         {
-            { "Disabled", NULL },
-            { "Enabled",  NULL },
+            { "Standard RGB", NULL },
+            { "Turboxray",    NULL },
+            { "Kitrinx",      NULL },
             { NULL, NULL },
         },
-        "Disabled"
+        "Standard RGB"
     },
     {
         "geargrafx_no_sprite_limit",
@@ -391,17 +392,55 @@ struct retro_core_option_v2_definition option_defs_us[] = {
 
     {
         "geargrafx_psg_huc6280a",
-        "HuC6280A Audio Chip",
+        "PSG Revision",
         NULL,
-        "Enable the HuC6280A audio chip, as found in the SuperGrafx and CoreGrafx I. When disabled, the original HuC6280 chip from the PC Engine is used instead.",
+        "Select the PSG revision. Auto uses HuC6280A for SuperGrafx and HuC6280 for all other systems. Explicit selections override automatic matching.",
         NULL,
         "audio",
         {
-            { "Enabled",  NULL },
-            { "Disabled", NULL },
+            { "Auto",     NULL },
+            { "HuC6280",  NULL },
+            { "HuC6280A", NULL },
             { NULL, NULL },
         },
-        "Enabled"
+        "Auto"
+    },
+    {
+        "geargrafx_adpcm_clock_mode",
+        "ADPCM Clock Speed",
+        NULL,
+        "Leave on Auto (recommended). The original hardware's piezoelectric resonator varies between units; 32100 Hz is most common. Auto uses this speed unless the game database overrides it.",
+        NULL,
+        "audio",
+        {
+            { "Auto",   NULL },
+            { "Manual", NULL },
+            { NULL, NULL },
+        },
+        "Auto"
+    },
+    {
+        "geargrafx_adpcm_clock_speed",
+        "ADPCM Manual Clock Speed",
+        NULL,
+        "Changing this is not recommended. Set the ADPCM clock speed from 32000 to 32200 Hz in 20 Hz steps. Only used in Manual mode.",
+        NULL,
+        "audio",
+        {
+            { "32000", "32000 Hz" },
+            { "32020", "32020 Hz" },
+            { "32040", "32040 Hz" },
+            { "32060", "32060 Hz" },
+            { "32080", "32080 Hz" },
+            { "32100", "32100 Hz" },
+            { "32120", "32120 Hz" },
+            { "32140", "32140 Hz" },
+            { "32160", "32160 Hz" },
+            { "32180", "32180 Hz" },
+            { "32200", "32200 Hz" },
+            { NULL, NULL },
+        },
+        "32100"
     },
     {
         "geargrafx_psg_volume",
@@ -507,9 +546,9 @@ struct retro_core_option_v2_definition option_defs_us[] = {
 
     {
         "geargrafx_cdrom_type",
-        "CD-ROM (restart)",
+        "CD-ROM Model (restart)",
         NULL,
-        "Select the CD-ROM system type. 'Auto' automatically selects the appropriate CD-ROM system based on the loaded content.",
+        "Select the CD-ROM model. Auto enables CD-ROM hardware only for CD media and automatically selects the system type. Selecting Standard, Super CD-ROM or Arcade CD-ROM also enables CD-ROM hardware for HuCards, preserving their ROM and cartridge RAM mapping. Reset the emulator to apply changes.",
         NULL,
         "cdrom",
         {
@@ -523,20 +562,19 @@ struct retro_core_option_v2_definition option_defs_us[] = {
     },
     {
         "geargrafx_cdrom_bios",
-        "CD-ROM Bios (restart)",
+        "CD BIOS (restart)",
         NULL,
-        "Specify the BIOS file to use for CD-ROM emulation. 'Auto' automatically selects the appropriate BIOS based on the loaded content. You can also manually choose one for compatibility with specific games.",
+        "Select the System Card BIOS used by standard CD-ROM games. System Card 3 is recommended. Known Game Express games are detected automatically and use gexpress.pce. Use 'Force Game Express' only for unrecognized or modified discs.",
         NULL,
         "cdrom",
         {
-            { "Auto",          NULL },
-            { "System Card 1", NULL },
-            { "System Card 2", NULL },
-            { "System Card 3", NULL },
-            { "Game Express",  NULL },
+            { "System Card 3",      NULL },
+            { "System Card 2",      NULL },
+            { "System Card 1",      NULL },
+            { "Force Game Express", NULL },
             { NULL, NULL },
         },
-        "Auto"
+        "System Card 3"
     },
     {
         "geargrafx_cdrom_preload",
@@ -631,7 +669,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
         "geargrafx_avenue_pad_3_switch",
         "Avenue Pad 3 Switch",
         NULL,
-        "Configure the button mapping for the Avenue Pad 3 controller's third button (III). 'Auto' automatically selects the appropriate mapping based on the game.",
+        "Configure whether Button III maps to SELECT or RUN for the Avenue Pad 3. Button IV maps to the other action. 'Auto' uses the game database and defaults to RUN.",
         NULL,
         "input",
         {

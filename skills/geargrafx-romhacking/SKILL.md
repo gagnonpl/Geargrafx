@@ -12,9 +12,10 @@ description: >-
   or PC Engine games. Also use for any ROM hacking, memory poking, or game
   modification task involving Geargrafx.
 compatibility: >-
-  Requires the Geargrafx MCP server. Before installing or configuring, call
-  debug_get_status to check if the server is already connected. If it responds,
-  the server is ready — skip setup entirely.
+  Requires the Geargrafx MCP server. Direct tool mode is the default. Before
+  installing or configuring, call debug_get_status to check if the server is
+  already connected. If --mcp-router is enabled, use get_tool_info and
+  execute_tool for routed tools.
 metadata:
   author: drhelius
   version: "1.0"
@@ -28,9 +29,9 @@ Hack, modify, and translate TurboGrafx-16, PC Engine, and SuperGrafx ROMs using 
 
 ## MCP Server Prerequisite
 
-**IMPORTANT — Check before installing:** Before attempting any installation or configuration, you MUST first verify if the Geargrafx MCP server is already connected in your current session. Call `debug_get_status` — if it returns a valid response, the server is active and ready.
+**IMPORTANT — Check before installing:** Before attempting any installation or configuration, you MUST first verify if the Geargrafx MCP server is already connected in your current session. In the default mode, call `debug_get_status` directly. If Geargrafx was intentionally started with `--mcp-router`, call `get_tool_info` with `{"name":"debug_get_status"}`, then call `execute_tool` with `{"name":"debug_get_status","arguments":{}}`. A valid response from either workflow means the server is active and ready.
 
-Only if the tool is not available or the call fails, you need to help install and configure the Geargrafx MCP server:
+Only if neither workflow is available or the call fails, you need to help install and configure the Geargrafx MCP server:
 
 ### Installing Geargrafx
 
@@ -178,7 +179,7 @@ To find text strings for translation or modification:
 
 1. Determine the character encoding — PC Engine games often use custom character maps stored in VRAM tiles, not ASCII
 2. `read_memory` across ROM scanning for known byte patterns
-3. Use `memory_find_bytes` to search for specific byte sequences across memory
+3. Use `memory_find` with `text` for literal strings or `hex_bytes` for encoded byte sequences
 4. Set read breakpoints on suspected text addresses with `set_breakpoint` (type: read) to confirm they're used for rendering
 5. `get_screenshot` to correlate displayed text with memory contents
 
@@ -246,7 +247,7 @@ The most powerful cheat-finding technique:
 ### 2. Find String Data
 
 1. Look for sequential text bytes in ROM using `read_memory` with large ranges
-2. Use `memory_find_bytes` to search for known byte patterns
+2. Use `memory_find` with `text` for literal strings or `hex_bytes` for known byte patterns
 3. Cross-reference with the character table to decode strings
 4. `add_memory_bookmark` to mark each string location
 

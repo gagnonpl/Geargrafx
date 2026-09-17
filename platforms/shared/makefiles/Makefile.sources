@@ -12,6 +12,7 @@ SOURCES_C := \
     $(DEPS_DIR)/lzma/src/LzmaEnc.c \
     $(DEPS_DIR)/lzma/src/LzmaDec.c \
     $(DEPS_DIR)/lzma/src/CpuArch.c \
+    $(DEPS_DIR)/minivorbis/minivorbis.c \
     $(DEPS_DIR)/miniz/miniz.c \
 
 SOURCES_CXX := \
@@ -51,7 +52,9 @@ SOURCES_CXX := \
     $(DESKTOP_SRC_DIR)/gui_debug_memory.cpp \
     $(DESKTOP_SRC_DIR)/gui_debug_psg.cpp \
     $(DESKTOP_SRC_DIR)/gui_debug_trace_logger.cpp \
+    $(DESKTOP_SRC_DIR)/gui_debug_turbolink.cpp \
     $(DESKTOP_SRC_DIR)/gui_debug_rewind.cpp \
+    $(DESKTOP_SRC_DIR)/trace_logger_formatter.cpp \
     $(DESKTOP_SRC_DIR)/ogl_renderer.cpp \
     $(DESKTOP_SRC_DIR)/ogl_shader_program.cpp \
     $(DESKTOP_SRC_DIR)/ogl_shader_chain.cpp \
@@ -60,20 +63,25 @@ SOURCES_CXX := \
     $(DESKTOP_SRC_DIR)/events.cpp \
     $(DESKTOP_SRC_DIR)/gamepad.cpp \
     $(DESKTOP_SRC_DIR)/rewind.cpp \
+    $(DESKTOP_SRC_DIR)/runahead.cpp \
     $(DESKTOP_SRC_DIR)/emu.cpp \
     $(DESKTOP_SRC_DIR)/sound_queue.cpp \
     $(DESKTOP_SRC_DIR)/single_instance.cpp \
     $(DESKTOP_SRC_DIR)/mcp/mcp_debug_adapter.cpp \
+    $(DESKTOP_SRC_DIR)/mcp/mcp_tool_registry.cpp \
     $(DESKTOP_SRC_DIR)/mcp/mcp_server.cpp \
+    $(DESKTOP_SRC_DIR)/turbolink/turbolink_manager.cpp \
     $(SRC_DIR)/geargrafx_core.cpp \
     $(SRC_DIR)/adpcm.cpp \
     $(SRC_DIR)/audio.cpp \
     $(SRC_DIR)/arcade_card_mapper.cpp \
     $(SRC_DIR)/cdrom_audio.cpp \
+    $(SRC_DIR)/cdrom_chd_file_adapter.cpp \
     $(SRC_DIR)/cdrom_chd_image.cpp \
     $(SRC_DIR)/cdrom_cuebin_image.cpp \
-    $(SRC_DIR)/cdrom_file.cpp \
-    $(SRC_DIR)/cdrom_file_native.cpp \
+    $(SRC_DIR)/media_file.cpp \
+    $(SRC_DIR)/media_file_native.cpp \
+    $(SRC_DIR)/ogg_vorbis_decoder.cpp \
     $(SRC_DIR)/cdrom_image.cpp \
     $(SRC_DIR)/cdrom_media.cpp \
     $(SRC_DIR)/cdrom.cpp \
@@ -92,4 +100,5 @@ SOURCES_CXX := \
     $(SRC_DIR)/scsi_controller.cpp \
     $(SRC_DIR)/sf2_mapper.cpp \
     $(SRC_DIR)/trace_logger.cpp \
+    $(SRC_DIR)/turbolink.cpp \
     $(SRC_DIR)/vgm_recorder.cpp

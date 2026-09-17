@@ -20,12 +20,14 @@
 #include <assert.h>
 #include <stdlib.h>
 #include "huc6260.h"
+#include "random.h"
 #include "trace_logger.h"
 
-HuC6260::HuC6260(HuC6202* huc6202, HuC6280* huc6280)
+HuC6260::HuC6260(HuC6202* huc6202, HuC6280* huc6280, Random* random)
 {
     m_huc6280 = huc6280;
     m_huc6202 = huc6202;
+    m_random = random;
     InitPointer(m_trace_logger);
     m_pixel_format = GG_PIXEL_RGBA8888;
     m_state.CR = &m_control_register;
@@ -67,6 +69,36 @@ void HuC6260::SetTraceLogger(TraceLogger* trace_logger)
     m_trace_logger = trace_logger;
 }
 
+void HuC6260::LogVceEvent(u8 event)
+{
+#if !defined(GG_DISABLE_DISASSEMBLER)
+    GG_Trace_Entry e = {};
+    e.type = TRACE_VCE;
+    e.vce.event = event;
+
+    switch (event)
+    {
+        case TRACE_VCE_CONTROL_WRITE:
+            e.vce.value = m_control_register;
+            break;
+        case TRACE_VCE_COLOR_WRITE:
+            e.vce.reg = m_color_table_address;
+            e.vce.value = m_color_table[m_color_table_address];
+            break;
+        case TRACE_VCE_VSYNC_START:
+        case TRACE_VCE_VSYNC_END:
+            e.vce.value = (u16)m_vpos;
+            break;
+        default:
+            break;
+    }
+
+    m_trace_logger->TraceLog(e);
+#else
+    UNUSED(event);
+#endif
+}
+
 void HuC6260::InitPalettes()
 {
     for (int i = 0; i < 512; i++)
@@ -74,33 +106,42 @@ void HuC6260::InitPalettes()
         u8 green = ((i >> 6) & 0x07) * 255 / 7;
         u8 red = ((i >> 3) & 0x07) * 255 / 7;
         u8 blue = (i & 0x07) * 255 / 7;
-        m_rgba888_palette[0][i][0] = red;
-        m_rgba888_palette[0][i][1] = green;
-        m_rgba888_palette[0][i][2] = blue;
-        m_rgba888_palette[0][i][3] = 255;
+        m_rgba888_palette[HuC6260_PALETTE_STANDARD_RGB][i][0] = red;
+        m_rgba888_palette[HuC6260_PALETTE_STANDARD_RGB][i][1] = green;
+        m_rgba888_palette[HuC6260_PALETTE_STANDARD_RGB][i][2] = blue;
+        m_rgba888_palette[HuC6260_PALETTE_STANDARD_RGB][i][3] = 255;
 
         // Custom palette defaults to standard RGB
-        m_rgba888_palette[2][i][0] = red;
-        m_rgba888_palette[2][i][1] = green;
-        m_rgba888_palette[2][i][2] = blue;
-        m_rgba888_palette[2][i][3] = 255;
+        m_rgba888_palette[HuC6260_PALETTE_CUSTOM][i][0] = red;
+        m_rgba888_palette[HuC6260_PALETTE_CUSTOM][i][1] = green;
+        m_rgba888_palette[HuC6260_PALETTE_CUSTOM][i][2] = blue;
+        m_rgba888_palette[HuC6260_PALETTE_CUSTOM][i][3] = 255;
 
         green = ((i >> 6) & 0x07) * 63 / 7;
         red = ((i >> 3) & 0x07) * 31 / 7;
         blue = (i & 0x07) * 31 / 7;
         u16 rgb565 = (red << 11) | (green << 5) | blue;
-        m_rgb565_palette[0][i] = rgb565;
-        m_rgb565_palette[2][i] = rgb565;
+        m_rgb565_palette[HuC6260_PALETTE_STANDARD_RGB][i] = rgb565;
+        m_rgb565_palette[HuC6260_PALETTE_CUSTOM][i] = rgb565;
 
-        m_rgba888_palette[1][i][0] = k_rgb888_palette_composite[i][0];
-        m_rgba888_palette[1][i][1] = k_rgb888_palette_composite[i][1];
-        m_rgba888_palette[1][i][2] = k_rgb888_palette_composite[i][2];
-        m_rgba888_palette[1][i][3] = 255;
+        const u8* turboxray = &k_rgb888_palette_turboxray[i * 3];
+        m_rgba888_palette[HuC6260_PALETTE_TURBOXRAY][i][0] = turboxray[0];
+        m_rgba888_palette[HuC6260_PALETTE_TURBOXRAY][i][1] = turboxray[1];
+        m_rgba888_palette[HuC6260_PALETTE_TURBOXRAY][i][2] = turboxray[2];
+        m_rgba888_palette[HuC6260_PALETTE_TURBOXRAY][i][3] = 255;
+
+        rgb565 = PackRGB565(turboxray[0], turboxray[1], turboxray[2]);
+        m_rgb565_palette[HuC6260_PALETTE_TURBOXRAY][i] = rgb565;
+
+        m_rgba888_palette[HuC6260_PALETTE_KITRINX][i][0] = k_rgb888_palette_composite[i][0];
+        m_rgba888_palette[HuC6260_PALETTE_KITRINX][i][1] = k_rgb888_palette_composite[i][1];
+        m_rgba888_palette[HuC6260_PALETTE_KITRINX][i][2] = k_rgb888_palette_composite[i][2];
+        m_rgba888_palette[HuC6260_PALETTE_KITRINX][i][3] = 255;
 
         rgb565 = PackRGB565(k_rgb888_palette_composite[i][0],
                             k_rgb888_palette_composite[i][1],
                             k_rgb888_palette_composite[i][2]);
-        m_rgb565_palette[1][i] = rgb565;
+        m_rgb565_palette[HuC6260_PALETTE_KITRINX][i] = rgb565;
     }
 }
 
@@ -126,10 +167,10 @@ void HuC6260::Reset()
     {
         if (m_reset_value < 0)
         {
-            bool random = (rand() & 0x1);
+            bool random = (m_random->Next8Bit() & 0x1);
             u16 and_value = random ? 0x1D0 : 0x1F1;
             u16 or_value = random ? 0x1C0 : 0x1FC;
-            m_color_table[i] = (((rand() & and_value) ) | or_value);
+            m_color_table[i] = ((m_random->Next16Bit() & and_value) | or_value);
             m_color_table[i] = MIN(m_color_table[i] + ((i & 0xFF) >> 2), 0x1FF);
         }
         else
@@ -213,16 +254,7 @@ void HuC6260::WriteRegister(u16 address, u8 value)
                     break;
             }
 
-#if !defined(GG_DISABLE_DISASSEMBLER)
-            if (m_trace_logger->IsEnabled(TRACE_VCE))
-            {
-                GG_Trace_Entry e = {};
-                e.type = TRACE_VCE;
-                e.vce.event = TRACE_VCE_CONTROL_WRITE;
-                e.vce.value = m_control_register;
-                m_trace_logger->TraceLog(e);
-            }
-#endif
+            TraceVceEvent(TRACE_VCE_CONTROL_WRITE);
             break;
         }
         case 2:
@@ -245,17 +277,7 @@ void HuC6260::WriteRegister(u16 address, u8 value)
                 false);
             m_color_table[m_color_table_address] = (m_color_table[m_color_table_address] & 0x00FF) | ((value & 0x01) << 8);
 
-#if !defined(GG_DISABLE_DISASSEMBLER)
-            if (m_trace_logger->IsEnabled(TRACE_VCE))
-            {
-                GG_Trace_Entry e = {};
-                e.type = TRACE_VCE;
-                e.vce.event = TRACE_VCE_COLOR_WRITE;
-                e.vce.reg = (u8)(m_color_table_address & 0xFF);
-                e.vce.value = m_color_table[m_color_table_address];
-                m_trace_logger->TraceLog(e);
-            }
-#endif
+            TraceVceEvent(TRACE_VCE_COLOR_WRITE);
             m_color_table_address = (m_color_table_address + 1) & 0x01FF;
             break;
         default:
@@ -344,13 +366,13 @@ void HuC6260::SetCustomPalette(const u8* data)
         u8 green = data[i * 3 + 1];
         u8 blue = data[i * 3 + 2];
 
-        m_rgba888_palette[2][i][0] = red;
-        m_rgba888_palette[2][i][1] = green;
-        m_rgba888_palette[2][i][2] = blue;
-        m_rgba888_palette[2][i][3] = 255;
+        m_rgba888_palette[HuC6260_PALETTE_CUSTOM][i][0] = red;
+        m_rgba888_palette[HuC6260_PALETTE_CUSTOM][i][1] = green;
+        m_rgba888_palette[HuC6260_PALETTE_CUSTOM][i][2] = blue;
+        m_rgba888_palette[HuC6260_PALETTE_CUSTOM][i][3] = 255;
 
         u16 rgb565 = PackRGB565(red, green, blue);
-        m_rgb565_palette[2][i] = rgb565;
+        m_rgb565_palette[HuC6260_PALETTE_CUSTOM][i] = rgb565;
     }
 }
 
@@ -488,5 +510,5 @@ void HuC6260::LoadState(std::istream& stream)
     stream.read(reinterpret_cast<char*> (&m_multiple_speeds), sizeof(m_multiple_speeds));
     stream.read(reinterpret_cast<char*> (&m_active_line), sizeof(m_active_line));
 
-    CalculateScreenBounds();
+    SanitizeState();
 }

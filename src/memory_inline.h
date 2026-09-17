@@ -32,6 +32,16 @@
 #include "mapper.h"
 #include "sf2_mapper.h"
 #include "arcade_card_mapper.h"
+#include "trace_logger.h"
+
+INLINE void Memory::TraceMprEvent(u8 bits, u8 index, u8 new_value)
+{
+    if (IsValidPointer(m_trace_logger) &&
+        m_trace_logger->IsEventEnabled(TRACE_SYSTEM, TRACE_SYSTEM_MPR_WRITE))
+    {
+        LogMprEvent(bits, index, new_value);
+    }
+}
 
 INLINE u8 Memory::Read(u16 address, bool block_transfer)
 {
@@ -118,7 +128,7 @@ INLINE u8 Memory::Read(u16 address, bool block_transfer)
             }
             case 0x1800:
                 // CDROM
-                if (m_media->IsCDROM())
+                if (m_media->IsCDROMHardwareEnabled())
                 {
                     if (IsValidPointer(m_current_mapper) && (offset >= 0x1A00))
                         return m_current_mapper->ReadHardware(offset);
@@ -200,6 +210,60 @@ INLINE bool Memory::TryPeek(u16 address, u8 bank, u8* value)
 #endif
 }
 
+INLINE bool Memory::CanPoke(u16 address)
+{
+#if defined(GG_TESTING)
+    UNUSED(address);
+    return true;
+#else
+    return CanPoke(address, m_mpr[address >> 13]);
+#endif
+}
+
+INLINE bool Memory::CanPoke(u16 address, u8 bank)
+{
+#if defined(GG_TESTING)
+    UNUSED(address);
+    UNUSED(bank);
+    return true;
+#else
+    u16 offset = address & 0x1FFF;
+
+    if (bank == 0xFF || !IsValidPointer(m_memory_map[bank]) || !m_memory_map_write[bank])
+        return false;
+
+    if (bank == 0xF7 && offset >= 0x800)
+        return false;
+
+    return true;
+#endif
+}
+
+INLINE bool Memory::TryPoke(u16 address, u8 value)
+{
+#if defined(GG_TESTING)
+    m_test_memory[address] = value;
+    return true;
+#else
+    return TryPoke(address, m_mpr[address >> 13], value);
+#endif
+}
+
+INLINE bool Memory::TryPoke(u16 address, u8 bank, u8 value)
+{
+    if (!CanPoke(address, bank))
+        return false;
+
+#if defined(GG_TESTING)
+    UNUSED(bank);
+    m_test_memory[address] = value;
+#else
+    m_memory_map[bank][address & 0x1FFF] = value;
+#endif
+
+    return true;
+}
+
 INLINE void Memory::Write(u16 address, u8 value, bool block_transfer)
 {
 #if defined(GG_TESTING)
@@ -249,6 +313,7 @@ INLINE void Memory::Write(u16 address, u8 value, bool block_transfer)
                 break;
             case 0x0800:
                 // PSG
+                m_huc6280->ClockPendingCycles();
                 m_audio->WritePSG(offset, value);
                 m_io_buffer = value;
                 break;
@@ -284,7 +349,7 @@ INLINE void Memory::Write(u16 address, u8 value, bool block_transfer)
             }
             case 0x1800:
                 // CDROM
-                if (m_media->IsCDROM())
+                if (m_media->IsCDROMHardwareEnabled())
                 {
                     if (IsValidPointer(m_current_mapper) && (offset >= 0x1A00))
                         m_current_mapper->WriteHardware(offset, value);
@@ -391,6 +456,8 @@ INLINE u8* Memory::GetCardRAM()
 
 INLINE u8* Memory::GetBackupRAM()
 {
+    if (!m_backup_ram_enabled)
+        return NULL;
     return m_backup_ram;
 }
 
@@ -431,6 +498,8 @@ INLINE int Memory::GetCardRAMEnd()
 
 INLINE int Memory::GetBackupRAMSize()
 {
+    if (!m_backup_ram_enabled)
+        return 0;
     return 0x800;
 }
 

@@ -33,7 +33,6 @@ INLINE void Adpcm::Clock(u32 cycles)
     RunAdpcm(cycles);
     UpdateReadWriteEvents(cycles);
     UpdateDMA(cycles);
-    UpdateAudio(cycles);
     CheckLength();
     CheckReset();
 }
@@ -91,17 +90,6 @@ INLINE u8 Adpcm::GetStatusRegisterSnapshot()
 
 INLINE void Adpcm::Write(u16 address, u8 value)
 {
-#if !defined(GG_DISABLE_DISASSEMBLER)
-    if (m_trace_logger->IsEnabled(TRACE_ADPCM))
-    {
-        GG_Trace_Entry e = {};
-        e.type = TRACE_ADPCM;
-        e.adpcm.reg = (u8)(address & 0xFF);
-        e.adpcm.value = value;
-        m_trace_logger->TraceLog(e);
-    }
-#endif
-
     switch (address)
     {
         case 0x08:
@@ -115,9 +103,8 @@ INLINE void Adpcm::Write(u16 address, u8 value)
             m_write_value = value;
             break;
         case 0x0B:
-            if (!m_scsi_controller->IsDataReady())
-                value &= ~0x01;
-            m_dma = value;
+            m_dma = m_scsi_controller->IsDataReady() ? value : (value & ~0x01);
+            TraceAdpcmEvent(TRACE_ADPCM_DMA_STATE, 0x0B, m_dma);
             break;
         case 0x0D:
             WriteControl(value);
@@ -130,12 +117,14 @@ INLINE void Adpcm::Write(u16 address, u8 value)
             Debug("ADPCM Write Invalid address: %04X, value: %02X", address, value);
             break;
     }
+
+    TraceAdpcmEvent(TRACE_ADPCM_REG_WRITE, address, value);
 }
 
 INLINE u32 Adpcm::CalculateCyclesPerSample(u8 sample_rate)
 {
-    double frequency = 32000.0 / (16.0 - (double)sample_rate);
-    return (u32)((double)GG_MASTER_CLOCK_RATE / frequency);
+    double frequency = (double)m_clock_speed / (16.0 - (double)sample_rate);
+    return (u32)(((double)GG_MASTER_CLOCK_RATE * 65536.0 / frequency) + 0.5);
 }
 
 INLINE u32 Adpcm::NextSlotCycles(bool read)
@@ -170,6 +159,8 @@ inline void Adpcm::UpdateReadWriteEvents(u32 cycles)
                     SetEndIRQ(true);
                 }
             }
+
+            TraceAdpcmEvent(TRACE_ADPCM_READ_COMPLETE, 0, m_read_value);
         }
     }
 
@@ -191,6 +182,8 @@ inline void Adpcm::UpdateReadWriteEvents(u32 cycles)
                 m_length++;
                 m_length &= 0x1FFFF;
             }
+
+            TraceAdpcmEvent(TRACE_ADPCM_WRITE_COMPLETE, 0, m_write_value);
         }
     }
 }
@@ -212,7 +205,10 @@ inline void Adpcm::UpdateDMA(u32 cycles)
                 m_write_value = m_scsi_controller->ReadData();
                 m_scsi_controller->AutoAck();
                 if (!m_scsi_controller->IsDataReady())
+                {
                     m_dma &= ~0x01;
+                    TraceAdpcmEvent(TRACE_ADPCM_DMA_STATE, 0x0B, m_dma);
+                }
             }
             else
                 m_dma_cycles = 1;
@@ -233,7 +229,10 @@ inline void Adpcm::RunAdpcm(u32 cycles)
 {
     if (IS_SET_BIT(m_control, 7))
     {
-        m_playing = IS_SET_BIT(m_control, 5);
+        bool playing = IS_SET_BIT(m_control, 5);
+        TraceAdpcmEvent(TRACE_ADPCM_PLAY_START, 0x0D, m_control, m_read_address);
+        TraceAdpcmEvent(TRACE_ADPCM_PLAY_STOP, 0x0D, m_control, m_read_address);
+        m_playing = playing;
         m_play_pending = false;
         return;
     }
@@ -243,18 +242,20 @@ inline void Adpcm::RunAdpcm(u32 cycles)
 
     if (!IS_SET_BIT(m_control, 5) || (IS_SET_BIT(m_control, 6) && (m_length == 0)))
     {
+        TraceAdpcmEvent(TRACE_ADPCM_PLAY_STOP, 0x0D, m_control, m_read_address);
         m_play_pending = false;
         m_playing = false;
         return;
     }
 
-    m_adpcm_cycle_counter += cycles;
+    m_adpcm_cycle_counter += cycles << 16;
     if (m_adpcm_cycle_counter >= m_cycles_per_sample)
     {
         m_adpcm_cycle_counter -= m_cycles_per_sample;
 
         if (m_play_pending)
         {
+            TraceAdpcmEvent(TRACE_ADPCM_PLAY_START, 0x0D, m_control, m_read_address);
             m_play_pending = false;
             m_playing = true;
             m_sample = 2048;
@@ -297,27 +298,38 @@ INLINE void Adpcm::WriteControl(u8 value)
         m_read_address = m_address - (IS_SET_BIT(value, 2) ? 0 : 1);
 
     if (IS_SET_BIT(value, 5) && !m_playing)
+    {
         m_play_pending = true;
+        TraceAdpcmEvent(TRACE_ADPCM_PLAY_REQUEST, 0x0D, value, m_read_address);
+    }
 
     m_control = value;
 }
 
 INLINE void Adpcm::SetEndIRQ(bool asserted)
 {
-    m_end_irq = asserted;
     if (asserted)
         m_cdrom->SetIRQ(CDROM_IRQ_ADPCM_END);
     else
         m_cdrom->ClearIRQ(CDROM_IRQ_ADPCM_END);
+    TraceAdpcmEvent(TRACE_ADPCM_END_IRQ, 0, asserted, m_read_address);
+    m_end_irq = asserted;
 }
 
 INLINE void Adpcm::SetHalfIRQ(bool asserted)
 {
-    m_half_irq = asserted;
     if (asserted)
         m_cdrom->SetIRQ(CDROM_IRQ_ADPCM_HALF);
     else
         m_cdrom->ClearIRQ(CDROM_IRQ_ADPCM_HALF);
+    TraceAdpcmEvent(TRACE_ADPCM_HALF_IRQ, 0, asserted, m_read_address);
+    m_half_irq = asserted;
+}
+
+INLINE void Adpcm::TraceAdpcmEvent(u8 event, u16 reg, u8 value, u16 address)
+{
+    if (IsValidPointer(m_trace_logger) && m_trace_logger->IsEventEnabled(TRACE_ADPCM, event))
+        LogAdpcmEvent(event, reg, value, address);
 }
 
 INLINE bool Adpcm::CheckReset()
@@ -340,47 +352,34 @@ INLINE void Adpcm::CheckLength()
     }
 }
 
-INLINE void Adpcm::UpdateAudio(u32 cycles)
+INLINE void Adpcm::Sample()
 {
-    m_audio_cycle_counter += cycles;
+    float x = (float)((int)m_sample - 2048) * 10.0f;
 
-    if (m_audio_cycle_counter >= GG_CDAUDIO_CYCLES_PER_SAMPLE)
+    const float R = 0.997f;
+    float y = x - m_dc_prev_x + R * m_dc_prev_y;
+    m_dc_prev_x = x;
+    m_dc_prev_y = y;
+
+    const float alpha_lpf = 0.4f;
+    m_filter_state += alpha_lpf * (y - m_filter_state);
+
+    float target_gain = m_cdrom->IsFaderEnabled(true) ? (float)m_cdrom->GetFaderValue() : 1.0f;
+    const float gain_smooth = 0.003f;
+    m_gain_smooth += (target_gain - m_gain_smooth) * gain_smooth;
+
+    int out32 = (int)(m_filter_state * m_gain_smooth);
+    s16 final_sample = (s16)CLAMP(out32, -32768, 32767);
+
+    m_buffer[m_buffer_index + 0] = final_sample;
+    m_buffer[m_buffer_index + 1] = final_sample;
+
+    m_buffer_index += 2;
+
+    if (m_buffer_index >= GG_AUDIO_BUFFER_SIZE)
     {
-        m_audio_cycle_counter -= GG_CDAUDIO_CYCLES_PER_SAMPLE;
-
-        // Convert to signed and amplify
-        float x = (float)((int)m_sample - 2048) * 10.0f;
-
-        // One-pole DC blocker: y[n] = x[n] - x[n-1] + R * y[n-1]
-        const float R = 0.997f;
-        float y = x - m_dc_prev_x + R * m_dc_prev_y;
-        m_dc_prev_x = x;
-        m_dc_prev_y = y;
-
-        // IIR Low-pass filter
-        const float alpha_lpf = 0.4f;
-        m_filter_state += alpha_lpf * (y - m_filter_state);
-
-        // Smooth gain
-        float target_gain = m_cdrom->IsFaderEnabled(true) ? (float)m_cdrom->GetFaderValue() : 1.0f;
-        const float gain_smooth = 0.003f;
-        m_gain_smooth += (target_gain - m_gain_smooth) * gain_smooth;
-
-        int out32 = (int)(m_filter_state * m_gain_smooth);
-
-        // Clamp to 16-bit signed
-        s16 final_sample = (s16)CLAMP(out32, -32768, 32767);
-
-        m_buffer[m_buffer_index + 0] = final_sample;
-        m_buffer[m_buffer_index + 1] = final_sample;
-
-        m_buffer_index += 2;
-
-        if (m_buffer_index >= GG_AUDIO_BUFFER_SIZE)
-        {
-            Error("ADPCM buffer overflow");
-            m_buffer_index = 0;
-        }
+        Error("ADPCM buffer overflow");
+        m_buffer_index = 0;
     }
 }
 
