@@ -57,6 +57,7 @@ static std::array<bool, MEMORY_EDITOR_MAX> mem_edit_visible = [] {
     a[MEMORY_EDITOR_PHYSICAL] = false;
     return a;
 }();
+static bool mem_edit_preview_visible = false;
 
 void gui_debug_memory_init(void)
 {
@@ -285,7 +286,7 @@ static void draw_tabs(void)
                 mem_edit_select = -1;
             current_mem_edit = i;
 
-            mem_edit[i].Draw();
+            mem_edit[i].Draw(true, mem_edit_preview_visible);
             ImGui::PopFont();
             ImGui::EndTabItem();
         }
@@ -542,7 +543,7 @@ static void memory_editor_menu(void)
     {
         for (int i = 0; i < MEMORY_EDITOR_MAX; i++)
             ImGui::MenuItem(mem_edit[i].GetTitle(), NULL, &mem_edit_visible[i]);
-
+        ImGui::MenuItem("Data Preview", NULL, &mem_edit_preview_visible);
         ImGui::EndMenu();
     }
 

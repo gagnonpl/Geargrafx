@@ -113,6 +113,8 @@ static bool add_bookmark_open = false;
 static bool add_symbol_open = false;
 static const int k_symbol_bank_count = 0x100;
 static const int k_symbol_address_count = 0x10000;
+static bool show_debug_controls = false;
+static bool show_disasm_view_controls = false;
 bool debug_frame_counter_open = false;
 bool debug_frame_counter_reset_on_f5 = true;
 u32 debug_frame_counter = 0;
@@ -428,15 +430,21 @@ void gui_debug_window_disassembler(void)
     ImGui::Begin("Disassembler", &config_debug.show_disassembler, ImGuiWindowFlags_MenuBar);
 
     disassembler_menu();
-    draw_controls();
 
-    ImGui::Separator();
+    if (show_debug_controls)
+    {
+        draw_controls();
+        ImGui::Separator();
+    }
 
     draw_breakpoints();
 
     ImGui::Separator();
 
-    draw_disassembler_view_controls();
+    if (show_disasm_view_controls)
+    {
+        draw_disassembler_view_controls();
+    }
 
     draw_disassembly();
 
@@ -2524,6 +2532,11 @@ static void disassembler_menu(void)
 
     if (ImGui::BeginMenu("View"))
     {
+        ImGui::MenuItem("Debug Controls", NULL, &show_debug_controls);
+        ImGui::MenuItem("Disasm View Controls", NULL, &show_disasm_view_controls);
+
+        ImGui::Separator();
+
         ImGui::MenuItem("Opcodes", NULL, &config_debug.dis_show_mem);
         ImGui::MenuItem("Symbols", NULL, &config_debug.dis_show_symbols);
         ImGui::MenuItem("Segment", NULL, &config_debug.dis_show_segment);
